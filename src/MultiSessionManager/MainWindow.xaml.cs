@@ -2,6 +2,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Win32;
 using MultiSessionManager.Agents;
@@ -12,6 +13,9 @@ namespace MultiSessionManager;
 
 public partial class MainWindow : Window
 {
+    private static readonly Brush ActiveLayoutBrush = new SolidColorBrush(Color.FromRgb(0x09, 0x47, 0x71));
+    private static readonly Brush NormalButtonBrush = new SolidColorBrush(Color.FromRgb(0x3A, 0x3D, 0x41));
+
     private readonly SessionManager? _manager;
     private readonly string? _startupError;
     private TerminalBridge? _bridge;
@@ -19,12 +23,17 @@ public partial class MainWindow : Window
     // 세션마다 xterm 이 마지막으로 알려 준 크기. 다시 시작할 때 그 크기로 띄운다.
     private readonly Dictionary<string, (int Cols, int Rows)> _sizes = [];
 
-    // 이번 실행에서 자동으로 한 번 띄운 세션. 사용자가 멈추거나 종료된 세션은 다시 고를 때 저절로 살리지 않는다.
+    // 이번 실행에서 자동으로 한 번 띄운 세션. 사용자가 멈추거나 종료된 세션은 다시 보일 때 저절로 살리지 않는다.
     private readonly HashSet<string> _autoStarted = [];
+
+    // 칸 포커스를 따라 목록 선택을 바꿀 때, 그 선택 변경이 다시 칸 배치를 건드리지 않게 막는다.
+    private bool _syncingSelection;
 
     public MainWindow()
     {
+        AppLog.Info("창 생성 시작");
         InitializeComponent();
+        AppLog.Info($"창 구성 끝 · 목록 {SessionStore.DefaultPath()}");
 
         var adapter = ClaudeAdapter.TryCreate();
         if (adapter is null)
@@ -45,8 +54,11 @@ public partial class MainWindow : Window
         UpdateButtons();
     }
 
+    private PaneLayout Layout => _manager!.Layout;
+
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
+        AppLog.Info("창 표시");
         if (_manager is null)
         {
             SetStatus(_startupError!);
@@ -58,10 +70,13 @@ public partial class MainWindow : Window
         {
             var userData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MultiSessionManager", "WebView2");
             var env = await CoreWebView2Environment.CreateAsync(null, userData);
+            AppLog.Info("WebView2 환경 생성");
             await Web.EnsureCoreWebView2Async(env);
+            AppLog.Info("WebView2 준비");
         }
         catch (Exception ex)
         {
+            AppLog.Error("WebView2 실패", ex);
             SetStatus("WebView2 런타임을 띄우지 못했습니다: " + ex.Message);
             return;
         }
@@ -71,19 +86,29 @@ public partial class MainWindow : Window
         _bridge.Ready += OnBridgeReady;
         _bridge.Input += (id, data) => Find(id)?.Write(data);
         _bridge.Resized += OnTerminalResized;
+        _bridge.FocusRequested += OnPaneFocused;
+        _bridge.Command += name =>
+        {
+            if (name == "new") OnNewSession(null, null);
+            else if (name.StartsWith("layout") && int.TryParse(name[6..], out var mode)) SetLayoutMode(mode);
+        };
+        _bridge.RatiosChanged += (col, row) =>
+        {
+            Layout.SetRatios(col, row);
+            _manager.Save();
+        };
         _bridge.Navigate();
     }
 
     private void OnBridgeReady()
     {
+        AppLog.Info("터미널 페이지 준비");
         foreach (var session in _manager!.Sessions)
+        {
             _bridge!.Create(session.Id);
-
-        var active = Find(_manager.ActiveSessionId) ?? _manager.Sessions.FirstOrDefault();
-        if (active is not null)
-            SessionList.SelectedItem = active;
-        else
-            _bridge!.Show(null);
+            PushTitle(session);
+        }
+        PushLayout();
         SetStatus($"세션 {_manager.Sessions.Count}개 · 저장 위치 {SessionStore.DefaultPath()}");
     }
 
@@ -97,9 +122,32 @@ public partial class MainWindow : Window
         });
         session.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName == nameof(Session.Status))
-                Dispatcher.BeginInvoke(UpdateButtons);
+            if (e.PropertyName is nameof(Session.Status) or nameof(Session.StatusText) or nameof(Session.Title))
+                Dispatcher.BeginInvoke(() =>
+                {
+                    PushTitle(session);
+                    UpdateButtons();
+                });
         };
+    }
+
+    private void PushTitle(Session session) => _bridge?.SetTitle(session.Id, session.Title, session.StatusText);
+
+    /// <summary>칸 배치를 화면에 보내고, 목록 선택을 포커스 칸의 세션에 맞춘다.</summary>
+    private void PushLayout()
+    {
+        if (_bridge is null) return;
+        _bridge.ApplyLayout(Layout);
+
+        _syncingSelection = true;
+        SessionList.SelectedItem = Find(Layout.FocusedSessionId);
+        _syncingSelection = false;
+
+        foreach (var (button, mode) in new[] { (Layout1Button, 1), (Layout2Button, 2), (Layout4Button, 4) })
+            button.Background = Layout.Mode == mode ? ActiveLayoutBrush : NormalButtonBrush;
+        UpdateButtons();
+        UpdateFocusStatus();
+        _manager!.Save();
     }
 
     private void OnTerminalResized(string id, int cols, int rows)
@@ -113,23 +161,40 @@ public partial class MainWindow : Window
             session.Resize(cols, rows);
             return;
         }
+        if (session.Status == SessionStatus.Starting)
+            return; // 다 뜨면 StartSession 이 마지막 크기로 맞춘다.
 
-        // 처음 보이는 세션은 xterm 이 크기를 잰 뒤에 띄운다. 그래야 Claude 가 첫 화면을 맞는 폭으로 그린다.
-        if (session.Status == SessionStatus.Idle && _autoStarted.Add(id) && ReferenceEquals(SessionList.SelectedItem, session))
+        // 칸에 처음 보이는 세션은 xterm 이 크기를 잰 뒤에 띄운다. 그래야 Claude 가 첫 화면을 맞는 폭으로 그린다.
+        if (session.Status == SessionStatus.Idle && Layout.IsVisible(id) && _autoStarted.Add(id))
             StartSession(session);
     }
 
-    private void StartSession(Session session)
+    private async void StartSession(Session session)
     {
         var (cols, rows) = _sizes.TryGetValue(session.Id, out var size) ? size : (120, 30);
-        var resuming = _manager!.HasConversation(session);
+        var watch = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            _manager.Start(session, cols, rows);
-            SetStatus($"{session.Title}: {(resuming ? "이전 대화를 이어서" : "새 대화로")} 시작했습니다 · {session.WorkingDirectory}");
+            var resumed = await _manager!.StartAsync(session, cols, rows);
+            if (resumed is null) return;
+            AppLog.Info($"세션 시작 {session.Id} {(resumed.Value ? "resume" : "new")} {cols}x{rows} · {watch.ElapsedMilliseconds}ms");
+
+            // 띄우는 사이에 목록에서 닫혔으면 바로 끝낸다.
+            if (!_manager.Sessions.Contains(session))
+            {
+                session.Stop();
+                return;
+            }
+            // 띄우는 사이에 칸 크기가 바뀌었으면 마지막 크기로 맞춘다.
+            if (_sizes.TryGetValue(session.Id, out var latest) && latest != (cols, rows))
+                session.Resize(latest.Cols, latest.Rows);
+
+            if (Layout.FocusedSessionId == session.Id)
+                SetStatus($"{session.Title}: {(resumed.Value ? "이전 대화를 이어서" : "새 대화로")} 시작했습니다 · {session.WorkingDirectory}");
         }
         catch (Exception ex)
         {
+            AppLog.Error($"세션 시작 실패 {session.Id}", ex);
             _bridge?.ShowExit(session.Id, "시작 실패: " + ex.Message);
             SetStatus($"{session.Title}: 시작하지 못했습니다 — {ex.Message}");
         }
@@ -147,7 +212,9 @@ public partial class MainWindow : Window
         var session = _manager.Create(dialog.FolderName);
         Attach(session);
         _bridge.Create(session.Id);
-        SessionList.SelectedItem = session;
+        PushTitle(session);
+        Layout.Show(session.Id);
+        PushLayout();
     }
 
     private void OnRename(object? sender, RoutedEventArgs? e)
@@ -157,12 +224,12 @@ public partial class MainWindow : Window
         if (dialog.ShowDialog() != true) return;
         _manager!.Rename(session, dialog.Value);
         if (session.IsRunning)
-            SetStatus("탭 이름을 바꿨습니다. Claude 쪽 세션 이름은 다음에 시작할 때 반영됩니다.");
+            SetStatus("탭 이름을 바꿨습니다. Claude 입력칸 쪽 이름은 다음에 시작할 때 반영됩니다.");
     }
 
     private void OnRestart(object sender, RoutedEventArgs e)
     {
-        if (Selected is not { } session || session.IsRunning) return;
+        if (Selected is not { } session || session.IsBusy) return;
         _autoStarted.Add(session.Id);
         StartSession(session);
     }
@@ -187,17 +254,34 @@ public partial class MainWindow : Window
         _manager!.Remove(session);
         _bridge?.Remove(session.Id);
         _sizes.Remove(session.Id);
-        SessionList.SelectedItem = Find(_manager.ActiveSessionId);
-        if (SessionList.SelectedItem is null)
-            _bridge?.Show(null);
+        PushLayout();
     }
 
     private void OnSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         UpdateButtons();
-        if (Selected is not { } session || _bridge is null) return;
-        _manager!.ActiveSessionId = session.Id;
-        _bridge.Show(session.Id);
+        if (_syncingSelection || Selected is not { } session || _bridge is null) return;
+        Layout.Show(session.Id);
+        PushLayout();
+    }
+
+    private void OnPaneFocused(int slot)
+    {
+        Layout.FocusSlot(slot);
+        PushLayout();
+    }
+
+    private void OnLayoutButton(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: string tag } && int.TryParse(tag, out var mode))
+            SetLayoutMode(mode);
+    }
+
+    private void SetLayoutMode(int mode)
+    {
+        if (_manager is null || _bridge is null || Layout.Mode == mode) return;
+        Layout.SetMode(mode, _manager.SessionOrder);
+        PushLayout();
     }
 
     private void OnListDoubleClick(object sender, MouseButtonEventArgs e) => OnRename(null, null);
@@ -213,10 +297,22 @@ public partial class MainWindow : Window
 
     private void OnWindowKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.T && Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift))
+        var mods = Keyboard.Modifiers;
+        if (e.Key == Key.T && mods == (ModifierKeys.Control | ModifierKeys.Shift))
         {
             OnNewSession(null, null);
             e.Handled = true;
+            return;
+        }
+        if (mods == (ModifierKeys.Control | ModifierKeys.Alt))
+        {
+            var key = e.Key == Key.System ? e.SystemKey : e.Key;
+            var mode = key switch { Key.D1 or Key.NumPad1 => 1, Key.D2 or Key.NumPad2 => 2, Key.D4 or Key.NumPad4 => 4, _ => 0 };
+            if (mode != 0)
+            {
+                SetLayoutMode(mode);
+                e.Handled = true;
+            }
         }
     }
 
@@ -238,7 +334,14 @@ public partial class MainWindow : Window
         RenameButton.IsEnabled = session is not null;
         CloseButton.IsEnabled = session is not null;
         StopButton.IsEnabled = session?.IsRunning == true;
-        RestartButton.IsEnabled = session is not null && !session.IsRunning;
+        RestartButton.IsEnabled = session is not null && !session.IsBusy;
+    }
+
+    // 상태줄은 포커스 칸의 세션을 보여 준다. 마지막으로 시작한 세션이 아니라 지금 보고 있는 세션이 기준이다.
+    private void UpdateFocusStatus()
+    {
+        if (Find(Layout.FocusedSessionId) is { } session)
+            SetStatus($"{session.Title} · {session.StatusText} · {session.WorkingDirectory}");
     }
 
     private void SetStatus(string text) => StatusBar.Text = text;

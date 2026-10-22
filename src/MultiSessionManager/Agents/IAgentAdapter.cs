@@ -11,9 +11,12 @@ public interface IAgentAdapter
 {
     string Kind { get; }
 
-    /// <summary>이 세션을 띄울 명령. 처음이면 새 대화, 기록이 있으면 이어 가기.</summary>
-    PtyStartInfo BuildStartInfo(SessionRecord session, int columns, int rows);
+    /// <summary>이 세션을 띄울 명령. 처음이면 새 대화, 기록이 있으면 이어 가기. 디스크를 보므로 UI 스레드 밖에서 부른다.</summary>
+    AgentLaunch Prepare(SessionRecord session, int columns, int rows);
 
     /// <summary>재개할 대화 기록이 디스크에 남아 있는지.</summary>
     bool HasConversation(SessionRecord session);
 }
+
+/// <param name="Resumes">이전 대화를 이어 가는지.</param>
+public sealed record AgentLaunch(PtyStartInfo StartInfo, bool Resumes);

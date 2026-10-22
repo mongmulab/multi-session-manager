@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
+using MultiSessionManager.Sessions;
 
 namespace MultiSessionManager.Terminal;
 
@@ -13,7 +14,8 @@ namespace MultiSessionManager.Terminal;
 /// </summary>
 public sealed class TerminalBridge : IDisposable
 {
-    public const string VirtualHost = "msm.local";
+    // .local 은 mDNS 조회 대상이라 쓰지 않는다. WebView2 문서가 권하는 대로 예약 TLD .example 을 쓴다.
+    public const string VirtualHost = "msm.example";
 
     private readonly CoreWebView2 _web;
     private readonly ConcurrentDictionary<string, StringBuilder> _pending = new();
@@ -24,6 +26,9 @@ public sealed class TerminalBridge : IDisposable
     public event Action<string, string>? Input;
     public event Action<string, int, int>? Resized;
     public event Action? Ready;
+    public event Action<int>? FocusRequested;
+    public event Action<double, double>? RatiosChanged;
+    public event Action<string>? Command;
 
     public TerminalBridge(CoreWebView2 web, string webRoot)
     {
@@ -51,7 +56,11 @@ public sealed class TerminalBridge : IDisposable
     }
 
     public void Create(string sessionId) => Send(new { t = "create", id = sessionId });
-    public void Show(string? sessionId) => Send(new { t = "show", id = sessionId });
+    public void ApplyLayout(PaneLayout layout) =>
+        Send(new { t = "layout", mode = layout.Mode, slots = layout.Slots, focus = layout.Focus, col = layout.ColumnRatio, row = layout.RowRatio });
+
+    public void SetTitle(string sessionId, string title, string status) =>
+        Send(new { t = "title", id = sessionId, title, status });
     public void ShowExit(string sessionId, string text)
     {
         Flush();
@@ -97,6 +106,9 @@ public sealed class TerminalBridge : IDisposable
         switch (root.GetProperty("t").GetString())
         {
             case "ready":
+                // 페이지가 스스로 잰 값: 탐색 시작부터 스크립트가 다 돌 때까지.
+                if (root.TryGetProperty("ms", out var ms))
+                    AppLog.Info($"페이지 스크립트 완료 · 탐색 시작 후 {ms.GetInt32()}ms");
                 _ready = true;
                 foreach (var json in _beforeReady)
                     _web.PostWebMessageAsJson(json);
@@ -108,6 +120,15 @@ public sealed class TerminalBridge : IDisposable
                 break;
             case "resize":
                 Resized?.Invoke(root.GetProperty("id").GetString()!, root.GetProperty("cols").GetInt32(), root.GetProperty("rows").GetInt32());
+                break;
+            case "focus":
+                FocusRequested?.Invoke(root.GetProperty("slot").GetInt32());
+                break;
+            case "command":
+                Command?.Invoke(root.GetProperty("name").GetString() ?? "");
+                break;
+            case "ratios":
+                RatiosChanged?.Invoke(root.GetProperty("col").GetDouble(), root.GetProperty("row").GetDouble());
                 break;
         }
     }

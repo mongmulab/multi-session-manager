@@ -12,7 +12,7 @@ public sealed class SessionManager : IDisposable
     private readonly ProcessJob _job = new();
 
     public ObservableCollection<Session> Sessions { get; } = [];
-    public string? ActiveSessionId { get; set; }
+    public PaneLayout Layout { get; private set; } = new();
 
     public SessionManager(SessionStore store, IAgentAdapter adapter)
     {
@@ -25,7 +25,12 @@ public sealed class SessionManager : IDisposable
         var state = _store.Load();
         foreach (var record in state.Sessions)
             Sessions.Add(new Session(record));
-        ActiveSessionId = state.ActiveSessionId;
+
+        // 분할 정보가 없는 옛 파일은 마지막에 보던 세션 하나를 1칸으로 연다.
+        Layout = state.Layout ?? new PaneLayout { Slots = [state.ActiveSessionId] };
+        Layout.Normalize(SessionOrder);
+        if (Layout.Slots.All(s => s is null) && Sessions.Count > 0)
+            Layout.Slots[0] = Sessions[0].Id;
     }
 
     public Session Create(string workingDirectory, string? title = null)
@@ -53,15 +58,17 @@ public sealed class SessionManager : IDisposable
     {
         session.Stop();
         Sessions.Remove(session);
-        if (ActiveSessionId == session.Id)
-            ActiveSessionId = Sessions.FirstOrDefault()?.Id;
+        Layout.Remove(session.Id);
         Save();
     }
 
-    public void Start(Session session, int columns, int rows)
+    /// <returns>이전 대화를 이어 갔는지. 이미 떠 있으면 null.</returns>
+    public async Task<bool?> StartAsync(Session session, int columns, int rows)
     {
-        session.Start(_adapter, _job, columns, rows);
-        Save();
+        var resumed = await session.StartAsync(_adapter, _job, columns, rows);
+        if (resumed is not null && Sessions.Contains(session))
+            Save();
+        return resumed;
     }
 
     public bool HasConversation(Session session) => _adapter.HasConversation(session.Record);
@@ -70,8 +77,11 @@ public sealed class SessionManager : IDisposable
         _store.Save(new AppState
         {
             Sessions = Sessions.Select(s => s.Record).ToList(),
-            ActiveSessionId = ActiveSessionId,
+            ActiveSessionId = Layout.FocusedSessionId,
+            Layout = Layout,
         });
+
+    public IReadOnlyList<string> SessionOrder => Sessions.Select(s => s.Id).ToList();
 
     private string DefaultTitle(string workingDirectory)
     {

@@ -1,0 +1,3 @@
+# 줄 끝은 LF 로 통일한다. 편집 도구마다 CRLF 를 섞어 넣어 내용 없는 diff 가 생겼다.
+* text=auto eol=lf
+*.png binary

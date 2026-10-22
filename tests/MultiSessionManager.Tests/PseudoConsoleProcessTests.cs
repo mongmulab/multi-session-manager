@@ -106,6 +106,7 @@ public class PseudoConsoleProcessTests
         var info = new PtyStartInfo(@"C:\nope\missing.exe", [], Path.GetTempPath(), EnvironmentBlock.FromCurrentProcess());
         var ex = Assert.Throws<System.ComponentModel.Win32Exception>(() => PseudoConsoleProcess.Start(info));
         Assert.Contains("missing.exe", ex.Message);
+        Assert.Equal(2, ex.NativeErrorCode); // ERROR_FILE_NOT_FOUND
     }
 
     private static bool IsAlive(int pid)

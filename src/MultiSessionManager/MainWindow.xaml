@@ -61,6 +61,12 @@
                 <Button x:Name="StopButton" Content="중지" Click="OnStop" ToolTip="프로세스만 끝냅니다. 대화 기록은 남습니다" />
                 <Button x:Name="CloseButton" Content="닫기" Click="OnClose" ToolTip="목록에서 지웁니다. Claude 쪽 대화 기록은 지우지 않습니다" />
             </WrapPanel>
+            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,2,0,8">
+                <TextBlock Text="화면" VerticalAlignment="Center" Foreground="#9A9A9A" Margin="0,0,8,6" />
+                <Button x:Name="Layout1Button" Content="1칸" Tag="1" Click="OnLayoutButton" ToolTip="한 세션만 크게 (Ctrl+Alt+1)" />
+                <Button x:Name="Layout2Button" Content="2칸" Tag="2" Click="OnLayoutButton" ToolTip="좌우 둘 (Ctrl+Alt+2)" />
+                <Button x:Name="Layout4Button" Content="4칸" Tag="4" Click="OnLayoutButton" ToolTip="둘씩 두 줄 (Ctrl+Alt+4)" />
+            </StackPanel>
             <ListBox x:Name="SessionList" Background="#1E1E1E" BorderBrush="#3A3D41" Foreground="#D4D4D4"
                      HorizontalContentAlignment="Stretch"
                      SelectionChanged="OnSelectionChanged" MouseDoubleClick="OnListDoubleClick" KeyDown="OnListKeyDown">

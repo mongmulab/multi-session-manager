@@ -20,4 +20,5 @@ public sealed class AppState
     public int Version { get; set; } = 1;
     public List<SessionRecord> Sessions { get; set; } = [];
     public string? ActiveSessionId { get; set; }
+    public PaneLayout? Layout { get; set; }
 }

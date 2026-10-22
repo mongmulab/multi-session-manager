@@ -68,7 +68,7 @@ public sealed class SessionStoreTests : IDisposable
     private sealed class NullAdapter : IAgentAdapter
     {
         public string Kind => "null";
-        public PtyStartInfo BuildStartInfo(SessionRecord session, int columns, int rows) => throw new NotSupportedException();
+        public AgentLaunch Prepare(SessionRecord session, int columns, int rows) => throw new NotSupportedException();
         public bool HasConversation(SessionRecord session) => false;
     }
 }

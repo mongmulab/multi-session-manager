@@ -18,7 +18,7 @@ public sealed class PseudoConsoleProcess : IDisposable
     private readonly FileStream _input;
     private readonly FileStream _output;
     private readonly Thread _reader;
-    private readonly RegisteredWaitHandle _exitWait;
+    private RegisteredWaitHandle? _exitWait;
     private readonly ManualResetEvent _processEvent;
     private readonly object _gate = new();
     private readonly ManualResetEventSlim _exitDone = new(false);
@@ -44,20 +44,23 @@ public sealed class PseudoConsoleProcess : IDisposable
 
         _reader = new Thread(ReadLoop) { IsBackground = true, Name = $"pty-read-{ProcessId}" };
         _processEvent = new ManualResetEvent(false) { SafeWaitHandle = new SafeWaitHandle(_processHandle, ownsHandle: false) };
-        _exitWait = ThreadPool.RegisterWaitForSingleObject(_processEvent, (_, _) => OnProcessExited(), null, Timeout.Infinite, executeOnlyOnce: true);
     }
 
-    public static PseudoConsoleProcess Start(PtyStartInfo info, ProcessJob? job = null)
+    /// <summary>
+    /// 프로세스를 띄운다. <paramref name="output"/>·<paramref name="exited"/> 는 읽기와 종료 감시를 시작하기 전에 붙인다.
+    /// 그래야 첫 출력이나 아주 빨리 끝나는 프로세스의 종료를 놓치지 않는다.
+    /// </summary>
+    public static PseudoConsoleProcess Start(PtyStartInfo info, ProcessJob? job = null, Action<string>? output = null, Action<int>? exited = null)
     {
         if (!CreatePipe(out var ptyInputRead, out var inputWrite, IntPtr.Zero, 0))
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "CreatePipe(input) 실패");
+            throw Fail("CreatePipe(input) 실패");
         if (!CreatePipe(out var outputRead, out var ptyOutputWrite, IntPtr.Zero, 0))
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "CreatePipe(output) 실패");
+            throw Fail("CreatePipe(output) 실패");
 
         var size = new COORD { X = (short)Math.Max(info.Columns, 2), Y = (short)Math.Max(info.Rows, 2) };
         var hr = CreatePseudoConsole(size, ptyInputRead, ptyOutputWrite, 0, out var hpc);
         if (hr != 0)
-            throw new Win32Exception(hr, "CreatePseudoConsole 실패");
+            throw new Win32Exception(hr, $"CreatePseudoConsole 실패 ({new Win32Exception(hr).Message})");
 
         IntPtr attrList = IntPtr.Zero;
         IntPtr envBlock = IntPtr.Zero;
@@ -67,9 +70,9 @@ public sealed class PseudoConsoleProcess : IDisposable
             InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref attrSize);
             attrList = Marshal.AllocHGlobal(attrSize);
             if (!InitializeProcThreadAttributeList(attrList, 1, 0, ref attrSize))
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "InitializeProcThreadAttributeList 실패");
+                throw Fail("InitializeProcThreadAttributeList 실패");
             if (!UpdateProcThreadAttribute(attrList, 0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, hpc, (IntPtr)IntPtr.Size, IntPtr.Zero, IntPtr.Zero))
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "UpdateProcThreadAttribute 실패");
+                throw Fail("UpdateProcThreadAttribute 실패");
 
             var si = new STARTUPINFOEX();
             si.StartupInfo.cb = Marshal.SizeOf<STARTUPINFOEX>();
@@ -83,7 +86,7 @@ public sealed class PseudoConsoleProcess : IDisposable
 
             var flags = EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT | CREATE_SUSPENDED;
             if (!CreateProcessW(null, cmd, IntPtr.Zero, IntPtr.Zero, false, flags, envBlock, info.WorkingDirectory, ref si, out var pi))
-                throw new Win32Exception(Marshal.GetLastWin32Error(), $"CreateProcess 실패: {info.ApplicationPath}");
+                throw Fail($"실행하지 못했습니다: {info.ApplicationPath} · 폴더 {info.WorkingDirectory}");
 
             try
             {
@@ -106,7 +109,10 @@ public sealed class PseudoConsoleProcess : IDisposable
 
             var process = new PseudoConsoleProcess(hpc, pi, inputWrite, outputRead);
             hpc = IntPtr.Zero;
+            if (output is not null) process.Output += output;
+            if (exited is not null) process.Exited += exited;
             process._reader.Start();
+            process._exitWait = ThreadPool.RegisterWaitForSingleObject(process._processEvent, (_, _) => process.OnProcessExited(), null, Timeout.Infinite, executeOnlyOnce: true);
             return process;
         }
         finally
@@ -127,6 +133,13 @@ public sealed class PseudoConsoleProcess : IDisposable
                 outputRead.Dispose();
             }
         }
+    }
+
+    // 우리가 붙인 설명 뒤에 Windows 가 알려 준 사유를 그대로 붙인다(예: "디렉터리 이름이 올바르지 않습니다").
+    private static Win32Exception Fail(string what)
+    {
+        var error = Marshal.GetLastWin32Error();
+        return new Win32Exception(error, $"{what} — {new Win32Exception(error).Message}");
     }
 
     public void Write(string text)
@@ -235,7 +248,7 @@ public sealed class PseudoConsoleProcess : IDisposable
         // 종료 처리(출력 비우기·Exited)가 끝나야 프로세스 핸들을 닫을 수 있다.
         _exitDone.Wait(TimeSpan.FromSeconds(5));
         ClosePseudoConsoleOnce();
-        _exitWait.Unregister(null);
+        _exitWait?.Unregister(null);
         _input.Dispose();
         _output.Dispose();
         _processEvent.Dispose();

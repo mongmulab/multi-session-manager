@@ -47,10 +47,12 @@ public sealed class ClaudeAdapter : IAgentAdapter
         return path is null ? null : new ClaudeAdapter(path);
     }
 
-    public IReadOnlyList<string> BuildArguments(SessionRecord session)
+    public IReadOnlyList<string> BuildArguments(SessionRecord session) => BuildArguments(session, HasConversation(session));
+
+    private static IReadOnlyList<string> BuildArguments(SessionRecord session, bool resumes)
     {
         var args = new List<string>();
-        if (HasConversation(session))
+        if (resumes)
             args.AddRange(["--resume", session.AgentSessionId]);
         else
             args.AddRange(["--session-id", session.AgentSessionId]);
@@ -60,8 +62,11 @@ public sealed class ClaudeAdapter : IAgentAdapter
         return args;
     }
 
-    public PtyStartInfo BuildStartInfo(SessionRecord session, int columns, int rows)
+    public PtyStartInfo BuildStartInfo(SessionRecord session, int columns, int rows) => Prepare(session, columns, rows).StartInfo;
+
+    public AgentLaunch Prepare(SessionRecord session, int columns, int rows)
     {
+        var resumes = HasConversation(session);
         var env = _baseEnvironment();
         foreach (var name in StrippedVariables)
             env.Remove(name);
@@ -69,15 +74,15 @@ public sealed class ClaudeAdapter : IAgentAdapter
         env["TERM"] = "xterm-256color";
         env["COLORTERM"] = "truecolor";
 
-        var args = BuildArguments(session);
+        var args = BuildArguments(session, resumes);
         if (ExecutableLocator.NeedsCmdShell(_executable))
         {
             var comspec = Environment.GetEnvironmentVariable("ComSpec") ?? @"C:\Windows\System32\cmd.exe";
             // cmd /s /c "...": 바깥 따옴표 한 쌍만 벗기고 나머지는 그대로 둔다.
             var inner = CommandLine.Build(_executable, args);
-            return new PtyStartInfo(comspec, ["/d", "/s", "/c", inner], session.WorkingDirectory, env, columns, rows);
+            return new AgentLaunch(new PtyStartInfo(comspec, ["/d", "/s", "/c", inner], session.WorkingDirectory, env, columns, rows), resumes);
         }
-        return new PtyStartInfo(_executable, args, session.WorkingDirectory, env, columns, rows);
+        return new AgentLaunch(new PtyStartInfo(_executable, args, session.WorkingDirectory, env, columns, rows), resumes);
     }
 
     public bool HasConversation(SessionRecord session) =>

@@ -2,6 +2,9 @@
   --bg: #1e1e1e;
   --fg: #d4d4d4;
   --muted: #8a8a8a;
+  --head: #252526;
+  --gutter: #2d2d30;
+  --accent: #007acc;
 }
 
 html, body {
@@ -10,30 +13,95 @@ html, body {
   background: var(--bg);
   color: var(--fg);
   overflow: hidden;
-  font-family: "Malgun Gothic", sans-serif;
+  font-family: "Segoe UI", "Malgun Gothic", sans-serif;
 }
 
 #panes {
   position: absolute;
   inset: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr;
 }
 
-.pane {
-  position: absolute;
-  inset: 0;
-  padding: 6px 4px 4px 8px;
-  box-sizing: border-box;
+.pane, .slot-empty {
   display: none;
+  min-width: 0;
+  min-height: 0;
+  box-sizing: border-box;
+  border: 1px solid transparent;
 }
 
-.pane.active {
-  display: block;
+.pane.visible {
+  display: flex;
+  flex-direction: column;
+}
+
+.slot-empty.visible {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 13px;
+  background: #1b1b1c;
+}
+
+.pane.focused, .slot-empty.focused {
+  border-color: var(--accent);
+}
+
+.pane-head {
+  flex: none;
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 3px 8px;
+  background: var(--head);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.pane-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pane-status {
+  color: #6fb3d2;
 }
 
 .pane .term {
-  width: 100%;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
+  padding: 4px 4px 2px 8px;
 }
+
+.gutter {
+  display: none;
+  background: var(--gutter);
+  z-index: 2;
+}
+
+.gutter-v {
+  grid-column: 2;
+  grid-row: 1 / -1;
+  cursor: col-resize;
+}
+
+.gutter-h {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  cursor: row-resize;
+}
+
+.gutter:hover {
+  background: var(--accent);
+}
+
+body.dragging-col, body.dragging-col * { cursor: col-resize !important; user-select: none; }
+body.dragging-row, body.dragging-row * { cursor: row-resize !important; user-select: none; }
 
 #empty {
   position: absolute;
@@ -43,6 +111,7 @@ html, body {
   justify-content: center;
   color: var(--muted);
   font-size: 14px;
+  pointer-events: none;
 }
 
 #empty.hidden {
