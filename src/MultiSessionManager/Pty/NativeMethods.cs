@@ -12,6 +12,7 @@ internal static class NativeMethods
     internal static readonly IntPtr PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = (IntPtr)0x00020016;
 
     internal const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
+    internal const int JobObjectBasicAccountingInformation = 1;
     internal const int JobObjectExtendedLimitInformation = 9;
 
     internal const uint INFINITE = 0xFFFFFFFF;
@@ -75,6 +76,19 @@ internal static class NativeMethods
         public UIntPtr Affinity;
         public uint PriorityClass;
         public uint SchedulingClass;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct JOBOBJECT_BASIC_ACCOUNTING_INFORMATION
+    {
+        public long TotalUserTime;
+        public long TotalKernelTime;
+        public long ThisPeriodTotalUserTime;
+        public long ThisPeriodTotalKernelTime;
+        public uint TotalPageFaultCount;
+        public uint TotalProcesses;
+        public uint ActiveProcesses;
+        public uint TotalTerminatedProcesses;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -162,4 +176,8 @@ internal static class NativeMethods
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool AssignProcessToJobObject(SafeFileHandle hJob, IntPtr hProcess);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool QueryInformationJobObject(SafeFileHandle hJob, int infoClass, out JOBOBJECT_BASIC_ACCOUNTING_INFORMATION lpInfo, int cbInfoLength, IntPtr lpReturnLength);
 }

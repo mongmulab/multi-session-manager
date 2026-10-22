@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Text;
 using MultiSessionManager.Pty;
 
@@ -89,6 +89,19 @@ public class PseudoConsoleProcessTests
     }
 
     [Fact]
+    public void Job_waits_until_its_processes_are_gone()
+    {
+        using var job = new ProcessJob();
+        // 콘솔을 닫은 뒤에도 남는 자손(Claude 가 끝나며 띄운 훅 같은 것)의 자리. 2초쯤 돌고 끝난다.
+        using var ping = Process.Start(new ProcessStartInfo("ping", "-n 3 127.0.0.1") { CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true })!;
+        job.Assign(ping.Handle);
+        Assert.Equal(1, job.ActiveProcesses);
+        Assert.False(job.WaitUntilEmpty(TimeSpan.FromMilliseconds(200)));
+        Assert.True(job.WaitUntilEmpty(TimeSpan.FromSeconds(10)), "ping 이 끝나면 Job 이 비어야 한다");
+        Assert.Equal(0, job.ActiveProcesses);
+    }
+
+    [Fact]
     public async Task Kill_reports_exit()
     {
         var (p, cap) = Start(Info("/d", "/c", "ping -n 60 127.0.0.1"));
@@ -98,6 +111,79 @@ public class PseudoConsoleProcessTests
             p.Kill();
             Assert.Equal(1, await cap.Exit.Task.WaitAsync(TimeSpan.FromSeconds(10)));
         }
+    }
+
+    [NodeFact]
+    public async Task Dispose_lets_the_child_clean_up_before_ending()
+    {
+        // 콘솔이 닫히면 node 는 SIGHUP 을 받는다. 강제로 죽였다면 표시 파일이 생기지 않는다.
+        var dir = Path.Combine(Path.GetTempPath(), "msm-hup-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var marker = Path.Combine(dir, "closed.txt");
+            var script = Path.Combine(dir, "hup.js");
+            File.WriteAllText(script, $$"""
+                process.on('SIGHUP', () => { require('fs').writeFileSync({{System.Text.Json.JsonSerializer.Serialize(marker)}}, 'hup'); process.exit(0); });
+                console.log('hup-ready');
+                setInterval(() => {}, 1000);
+                """);
+            var (p, cap) = Start(new PtyStartInfo(NodeFactAttribute.Node!, [script], dir, EnvironmentBlock.FromCurrentProcess(), 100, 30));
+            Assert.True(await cap.WaitFor("hup-ready"), "node 가 떠야 한다: " + cap.Text);
+
+            var sw = Stopwatch.StartNew();
+            p.Dispose();
+            Assert.True(File.Exists(marker), "자식이 정리할 기회를 얻지 못했다");
+            Assert.True(sw.Elapsed < PseudoConsoleProcess.GracefulExitTimeout + TimeSpan.FromSeconds(3), $"끝내는 데 {sw.ElapsedMilliseconds}ms");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [NodeFact]
+    public async Task Dispose_sends_the_quit_input_before_closing_the_console()
+    {
+        // Claude 처럼 키를 날것으로 읽다가 Ctrl+C()가 오면 나간다. 콘솔을 먼저 닫았다면 SIGHUP 이 먼저 온다.
+        var dir = Path.Combine(Path.GetTempPath(), "msm-quit-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var marker = Path.Combine(dir, "how.txt");
+            var script = Path.Combine(dir, "quit.js");
+            var m = System.Text.Json.JsonSerializer.Serialize(marker);
+            File.WriteAllText(script, $$"""
+                const fs = require('fs');
+                process.stdin.setRawMode(true);
+                process.stdin.on('data', (d) => { if (d.includes(3)) { fs.writeFileSync({{m}}, 'ctrl-c'); process.exit(0); } });
+                process.on('SIGHUP', () => { fs.writeFileSync({{m}}, 'hup'); process.exit(0); });
+                console.log('quit-ready');
+                setInterval(() => {}, 1000);
+                """);
+            var (p, cap) = Start(new PtyStartInfo(NodeFactAttribute.Node!, [script], dir, EnvironmentBlock.FromCurrentProcess(), 100, 30, [""]));
+            Assert.True(await cap.WaitFor("quit-ready"), "node 가 떠야 한다: " + cap.Text);
+
+            p.Dispose();
+            Assert.Equal("ctrl-c", File.Exists(marker) ? File.ReadAllText(marker) : "(없음)");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Dispose_still_ends_a_child_that_ignores_the_close()
+    {
+        // ping 은 CTRL_CLOSE 를 따로 다루지 않는다. 기다리는 시간이 지나면 강제로라도 끝나야 한다.
+        var (p, cap) = Start(Info("/d", "/c", "ping -n 60 127.0.0.1"));
+        Assert.True(await cap.WaitFor("127.0.0.1"));
+        var pid = p.ProcessId;
+        var sw = Stopwatch.StartNew();
+        p.Dispose();
+        Assert.False(IsAlive(pid));
+        Assert.True(sw.Elapsed < PseudoConsoleProcess.GracefulExitTimeout + TimeSpan.FromSeconds(6), $"끝내는 데 {sw.ElapsedMilliseconds}ms");
     }
 
     [Fact]
@@ -127,5 +213,19 @@ public class PseudoConsoleProcessTests
             Thread.Sleep(100);
         }
         return 0;
+    }
+}
+
+/// <summary>PATH 에 node 가 있을 때만 돈다. 콘솔 닫힘 신호를 받아 정리하는 자식이 필요해서 쓴다.</summary>
+public sealed class NodeFactAttribute : FactAttribute
+{
+    public static readonly string? Node = (Environment.GetEnvironmentVariable("PATH") ?? "")
+        .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+        .Select(d => Path.Combine(d.Trim(), "node.exe"))
+        .FirstOrDefault(File.Exists);
+
+    public NodeFactAttribute()
+    {
+        if (Node is null) Skip = "PATH 에 node.exe 가 없습니다";
     }
 }

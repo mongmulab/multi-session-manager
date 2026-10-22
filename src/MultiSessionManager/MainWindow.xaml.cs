@@ -2,6 +2,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Win32;
@@ -18,7 +19,8 @@ public partial class MainWindow : Window
 
     private readonly SessionManager? _manager;
     private readonly string? _startupError;
-    private TerminalBridge? _bridge;
+    private readonly TerminalBridge _bridge = new();
+    private readonly Task<CoreWebView2Environment>? _webEnvironment;
 
     // 세션마다 xterm 이 마지막으로 알려 준 크기. 다시 시작할 때 그 크기로 띄운다.
     private readonly Dictionary<string, (int Cols, int Rows)> _sizes = [];
@@ -42,16 +44,38 @@ public partial class MainWindow : Window
         }
         else
         {
+            // 브라우저 환경은 창을 그리는 동안 따로 만든다. 창이 뜨기를 기다릴 이유가 없다.
+            _webEnvironment = CreateWebEnvironmentAsync();
+
             _manager = new SessionManager(new SessionStore(SessionStore.DefaultPath()), adapter);
             _manager.Load();
+            WireBridge();
             foreach (var session in _manager.Sessions)
+            {
                 Attach(session);
+                _bridge.Create(session.Id);
+                PushTitle(session);
+            }
             SessionList.ItemsSource = _manager.Sessions;
+            PushLayout();
         }
 
+        SourceInitialized += OnSourceInitialized;
         Loaded += OnLoaded;
         Closing += OnClosing;
         UpdateButtons();
+    }
+
+    private static Task<CoreWebView2Environment> CreateWebEnvironmentAsync()
+    {
+        var userData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MultiSessionManager", "WebView2");
+        return CoreWebView2Environment.CreateAsync(null, userData);
+    }
+
+    private void OnSourceInitialized(object? sender, EventArgs e)
+    {
+        if (_manager?.Window is { } bounds)
+            WindowPlacement.Apply(new WindowInteropHelper(this).Handle, bounds);
     }
 
     private PaneLayout Layout => _manager!.Layout;
@@ -68,8 +92,7 @@ public partial class MainWindow : Window
 
         try
         {
-            var userData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MultiSessionManager", "WebView2");
-            var env = await CoreWebView2Environment.CreateAsync(null, userData);
+            var env = await _webEnvironment!;
             AppLog.Info("WebView2 환경 생성");
             await Web.EnsureCoreWebView2Async(env);
             AppLog.Info("WebView2 준비");
@@ -81,8 +104,11 @@ public partial class MainWindow : Window
             return;
         }
 
-        var webRoot = Path.Combine(AppContext.BaseDirectory, "Web");
-        _bridge = new TerminalBridge(Web.CoreWebView2, webRoot);
+        _bridge.Connect(Web.CoreWebView2, Path.Combine(AppContext.BaseDirectory, "Web"));
+    }
+
+    private void WireBridge()
+    {
         _bridge.Ready += OnBridgeReady;
         _bridge.Input += (id, data) => Find(id)?.Write(data);
         _bridge.Resized += OnTerminalResized;
@@ -95,29 +121,22 @@ public partial class MainWindow : Window
         _bridge.RatiosChanged += (col, row) =>
         {
             Layout.SetRatios(col, row);
-            _manager.Save();
+            _manager!.Save();
         };
-        _bridge.Navigate();
     }
 
     private void OnBridgeReady()
     {
         AppLog.Info("터미널 페이지 준비");
-        foreach (var session in _manager!.Sessions)
-        {
-            _bridge!.Create(session.Id);
-            PushTitle(session);
-        }
-        PushLayout();
-        SetStatus($"세션 {_manager.Sessions.Count}개 · 저장 위치 {SessionStore.DefaultPath()}");
+        SetStatus($"세션 {_manager!.Sessions.Count}개 · 저장 위치 {SessionStore.DefaultPath()}");
     }
 
     private void Attach(Session session)
     {
-        session.Output += (s, text) => _bridge?.QueueOutput(s.Id, text);
+        session.Output += (s, text) => _bridge.QueueOutput(s.Id, text);
         session.Exited += (s, code) => Dispatcher.BeginInvoke(() =>
         {
-            _bridge?.ShowExit(s.Id, $"프로세스 종료 · 코드 {code} · '다시 시작'을 누르면 같은 대화로 이어집니다");
+            _bridge.ShowExit(s.Id, $"프로세스 종료 · 코드 {code} · '다시 시작'을 누르면 같은 대화로 이어집니다");
             UpdateButtons();
         });
         session.PropertyChanged += (_, e) =>
@@ -131,12 +150,11 @@ public partial class MainWindow : Window
         };
     }
 
-    private void PushTitle(Session session) => _bridge?.SetTitle(session.Id, session.Title, session.StatusText);
+    private void PushTitle(Session session) => _bridge.SetTitle(session.Id, session.Title, session.StatusText);
 
     /// <summary>칸 배치를 화면에 보내고, 목록 선택을 포커스 칸의 세션에 맞춘다.</summary>
     private void PushLayout()
     {
-        if (_bridge is null) return;
         _bridge.ApplyLayout(Layout);
 
         _syncingSelection = true;
@@ -165,6 +183,8 @@ public partial class MainWindow : Window
             return; // 다 뜨면 StartSession 이 마지막 크기로 맞춘다.
 
         // 칸에 처음 보이는 세션은 xterm 이 크기를 잰 뒤에 띄운다. 그래야 Claude 가 첫 화면을 맞는 폭으로 그린다.
+        // 화면보다 먼저 띄우면 안 된다. Claude 가 시작할 때 터미널에 묻는 말에 답할 xterm 이 아직 없어서,
+        // Claude 가 전체 화면 렌더러를 실패로 치고 이 PC 의 모든 세션에서 꺼 버린다(~/.claude.json fullscreenAutoDisabled).
         if (session.Status == SessionStatus.Idle && Layout.IsVisible(id) && _autoStarted.Add(id))
             StartSession(session);
     }
@@ -195,7 +215,7 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             AppLog.Error($"세션 시작 실패 {session.Id}", ex);
-            _bridge?.ShowExit(session.Id, "시작 실패: " + ex.Message);
+            _bridge.ShowExit(session.Id, "시작 실패: " + ex.Message);
             SetStatus($"{session.Title}: 시작하지 못했습니다 — {ex.Message}");
         }
         UpdateButtons();
@@ -203,7 +223,7 @@ public partial class MainWindow : Window
 
     private void OnNewSession(object? sender, RoutedEventArgs? e)
     {
-        if (_manager is null || _bridge is null) return;
+        if (_manager is null) return;
         var dialog = new OpenFolderDialog { Title = "세션을 열 폴더" };
         if (Selected is { } current && Directory.Exists(current.WorkingDirectory))
             dialog.InitialDirectory = Path.GetDirectoryName(current.WorkingDirectory) ?? current.WorkingDirectory;
@@ -238,7 +258,7 @@ public partial class MainWindow : Window
     {
         if (Selected is not { } session || !session.IsRunning) return;
         session.Stop();
-        _bridge?.ShowExit(session.Id, "중지했습니다 · '다시 시작'을 누르면 같은 대화로 이어집니다");
+        _bridge.ShowExit(session.Id, "중지했습니다 · '다시 시작'을 누르면 같은 대화로 이어집니다");
         UpdateButtons();
     }
 
@@ -252,7 +272,7 @@ public partial class MainWindow : Window
             if (answer != MessageBoxResult.OK) return;
         }
         _manager!.Remove(session);
-        _bridge?.Remove(session.Id);
+        _bridge.Remove(session.Id);
         _sizes.Remove(session.Id);
         PushLayout();
     }
@@ -260,7 +280,7 @@ public partial class MainWindow : Window
     private void OnSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         UpdateButtons();
-        if (_syncingSelection || Selected is not { } session || _bridge is null) return;
+        if (_syncingSelection || Selected is not { } session) return;
         Layout.Show(session.Id);
         PushLayout();
     }
@@ -279,7 +299,7 @@ public partial class MainWindow : Window
 
     private void SetLayoutMode(int mode)
     {
-        if (_manager is null || _bridge is null || Layout.Mode == mode) return;
+        if (_manager is null || Layout.Mode == mode) return;
         Layout.SetMode(mode, _manager.SessionOrder);
         PushLayout();
     }
@@ -319,8 +339,11 @@ public partial class MainWindow : Window
     private void OnClosing(object? sender, CancelEventArgs e)
     {
         if (_manager is null) return;
+        _manager.Window = WindowPlacement.Capture(new WindowInteropHelper(this).Handle) ?? _manager.Window;
         _manager.Save();
-        _bridge?.Dispose();
+        // 세션 정리(Claude 의 종료 훅까지)는 몇 초 걸릴 수 있다. 창은 먼저 내려 바로 닫힌 것처럼 보이게 한다.
+        Hide();
+        _bridge.Dispose();
         _manager.Dispose();
     }
 

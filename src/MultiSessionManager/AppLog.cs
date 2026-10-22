@@ -12,6 +12,10 @@ public static class AppLog
     private static readonly Stopwatch Clock = Stopwatch.StartNew();
     private static readonly object Gate = new();
     private static string? _path;
+    private static readonly DateTime ProcessStart = Process.GetCurrentProcess().StartTime;
+
+    /// <summary>OS 가 프로세스를 만든 뒤 지난 시간. .NET 이 뜨기 전 구간까지 들어간다.</summary>
+    public static TimeSpan SinceProcessStart => DateTime.Now - ProcessStart;
 
     public static string Directory =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MultiSessionManager", "logs");

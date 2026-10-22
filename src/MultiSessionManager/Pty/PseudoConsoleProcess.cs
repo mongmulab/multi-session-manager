@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
@@ -15,6 +15,7 @@ public sealed class PseudoConsoleProcess : IDisposable
 {
     private IntPtr _pseudoConsole;
     private readonly IntPtr _processHandle;
+    private readonly IReadOnlyList<string> _quitInput;
     private readonly FileStream _input;
     private readonly FileStream _output;
     private readonly Thread _reader;
@@ -34,8 +35,9 @@ public sealed class PseudoConsoleProcess : IDisposable
     /// <summary>종료 코드. 남은 출력을 다 보낸 다음 한 번만 불린다.</summary>
     public event Action<int>? Exited;
 
-    private PseudoConsoleProcess(IntPtr pseudoConsole, PROCESS_INFORMATION pi, SafeFileHandle input, SafeFileHandle output)
+    private PseudoConsoleProcess(IntPtr pseudoConsole, PROCESS_INFORMATION pi, SafeFileHandle input, SafeFileHandle output, IReadOnlyList<string>? quitInput)
     {
+        _quitInput = quitInput ?? [];
         _pseudoConsole = pseudoConsole;
         _processHandle = pi.hProcess;
         ProcessId = pi.dwProcessId;
@@ -107,7 +109,7 @@ public sealed class PseudoConsoleProcess : IDisposable
             ptyInputRead.Dispose();
             ptyOutputWrite.Dispose();
 
-            var process = new PseudoConsoleProcess(hpc, pi, inputWrite, outputRead);
+            var process = new PseudoConsoleProcess(hpc, pi, inputWrite, outputRead, info.QuitInput);
             hpc = IntPtr.Zero;
             if (output is not null) process.Output += output;
             if (exited is not null) process.Exited += exited;
@@ -144,11 +146,18 @@ public sealed class PseudoConsoleProcess : IDisposable
 
     public void Write(string text)
     {
+        lock (_gate)
+            if (_disposed) return;
+        Send(text);
+    }
+
+    private void Send(string text)
+    {
         if (string.IsNullOrEmpty(text)) return;
         var bytes = Encoding.UTF8.GetBytes(text);
         lock (_gate)
         {
-            if (_disposed || ExitCode is not null) return;
+            if (ExitCode is not null) return;
             try
             {
                 _input.Write(bytes, 0, bytes.Length);
@@ -236,14 +245,53 @@ public sealed class PseudoConsoleProcess : IDisposable
         }
     }
 
+    /// <summary>
+    /// 끝낼 때 자식이 스스로 정리하고 나가기를 기다리는 시간. 넘기면 강제로 끝낸다.
+    /// Windows 도 콘솔을 닫을 때 처리기에 5초를 준다.
+    /// </summary>
+    public static TimeSpan GracefulExitTimeout { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>나가는 입력(<see cref="PtyStartInfo.QuitInput"/>)을 한 조각씩 보내는 간격.</summary>
+    public static TimeSpan QuitInputGap { get; set; } = TimeSpan.FromMilliseconds(300);
+
     public void Dispose()
     {
+        bool running;
         lock (_gate)
         {
             if (_disposed) return;
             _disposed = true;
-            if (ExitCode is null)
+            running = ExitCode is null;
+        }
+        // 바로 죽이지 않는다. 나가는 입력 → 콘솔 닫기(Windows 가 CTRL_CLOSE_EVENT 를 보낸다) → 강제 종료 순으로
+        // 스스로 정리할 기회를 준다. Claude 는 시작하다 죽으면 다음 실행 때 전체 화면 렌더러가 실패했다고
+        // 기록하고, 그 기록이 두 번 쌓이면 이 PC 의 모든 세션에서 그 렌더러를 끈다.
+        if (running)
+        {
+            var started = Environment.TickCount64;
+            var how = "나가는 입력";
+            var exited = false;
+            // 먼저 사용자가 나가는 것과 같은 입력을 보낸다. 콘솔이 살아 있어 종료 훅이 끝까지 돈다.
+            // 콘솔부터 닫으면 그 뒤에 띄운 훅이 콘솔과 함께 끊기는 일이 있었다(SessionEnd 4건 중 1건 유실).
+            foreach (var keys in _quitInput)
+            {
+                Send(keys);
+                if (exited = _processEvent.WaitOne(QuitInputGap)) break;
+            }
+            if (!exited && _quitInput.Count > 0)
+                exited = _processEvent.WaitOne(GracefulExitTimeout);
+            if (!exited)
+            {
+                how = "콘솔 닫기";
+                ClosePseudoConsoleOnce();
+                exited = _processEvent.WaitOne(GracefulExitTimeout);
+            }
+            if (!exited)
+            {
+                how = "강제 종료";
                 TerminateProcess(_processHandle, 1);
+            }
+            AppLog.Info($"프로세스 {ProcessId} 끝냄 · {how} {Environment.TickCount64 - started}ms");
         }
         // 종료 처리(출력 비우기·Exited)가 끝나야 프로세스 핸들을 닫을 수 있다.
         _exitDone.Wait(TimeSpan.FromSeconds(5));

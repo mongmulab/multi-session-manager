@@ -1,5 +1,4 @@
-﻿using System.Diagnostics;
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Threading;
 
 namespace MultiSessionManager;
@@ -9,8 +8,7 @@ public partial class App : Application
     public App()
     {
         // 프로세스가 뜬 시각부터 여기까지가 .NET·WPF 기동 몫이다. 느린 구간을 가르는 첫 기준점.
-        var sinceProcessStart = DateTime.Now - Process.GetCurrentProcess().StartTime;
-        AppLog.Info($"App 생성 · 프로세스 시작 후 {sinceProcessStart.TotalMilliseconds:N0}ms");
+        AppLog.Info($"App 생성 · 프로세스 시작 후 {AppLog.SinceProcessStart.TotalMilliseconds:N0}ms");
 
         DispatcherUnhandledException += OnUnhandled;
         AppDomain.CurrentDomain.UnhandledException += (_, e) => AppLog.Error("처리되지 않은 예외(종료)", e.ExceptionObject as Exception);

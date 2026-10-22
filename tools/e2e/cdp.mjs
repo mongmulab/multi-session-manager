@@ -1,6 +1,6 @@
 // WebView2 원격 디버깅 포트에 붙어 실제 입력 경로(xterm textarea → onData → C# → ConPTY)로 키를 넣고 화면을 읽는다.
 // 사용: node cdp.mjs <port> <outDir> <step...>
-//   key:<Enter|Down|Escape>   text:<문자열>   ime:<한글>   wait:<ms>
+//   key:<Enter|Down|Escape|Backspace>   text:<문자열>   ime:<한글>   wait:<ms>
 //   shot:<file.png>            screen:<file.txt>
 //   eval:<식>                  결과를 JSON 한 줄로 표준출력에 찍는다
 //   drag:<x1>,<y1>,<x2>,<y2>   마우스로 끈다(페이지 좌표)
@@ -37,6 +37,7 @@ const KEYS = {
   Enter: { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' },
   Down: { key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40 },
   Escape: { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 },
+  Backspace: { key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8 },
 };
 
 async function evaluate(expression) {

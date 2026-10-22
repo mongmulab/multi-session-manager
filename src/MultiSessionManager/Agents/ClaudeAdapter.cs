@@ -75,14 +75,16 @@ public sealed class ClaudeAdapter : IAgentAdapter
         env["COLORTERM"] = "truecolor";
 
         var args = BuildArguments(session, resumes);
+        // Ctrl+C: 입력 중이면 지우고, 답하는 중이면 멈추고, 빈 입력에서 두 번이면 나간다. 세 번이면 어느 경우든 나간다.
+        IReadOnlyList<string> quit = ["", "", ""];
         if (ExecutableLocator.NeedsCmdShell(_executable))
         {
             var comspec = Environment.GetEnvironmentVariable("ComSpec") ?? @"C:\Windows\System32\cmd.exe";
             // cmd /s /c "...": 바깥 따옴표 한 쌍만 벗기고 나머지는 그대로 둔다.
             var inner = CommandLine.Build(_executable, args);
-            return new AgentLaunch(new PtyStartInfo(comspec, ["/d", "/s", "/c", inner], session.WorkingDirectory, env, columns, rows), resumes);
+            return new AgentLaunch(new PtyStartInfo(comspec, ["/d", "/s", "/c", inner], session.WorkingDirectory, env, columns, rows, quit), resumes);
         }
-        return new AgentLaunch(new PtyStartInfo(_executable, args, session.WorkingDirectory, env, columns, rows), resumes);
+        return new AgentLaunch(new PtyStartInfo(_executable, args, session.WorkingDirectory, env, columns, rows, quit), resumes);
     }
 
     public bool HasConversation(SessionRecord session) =>

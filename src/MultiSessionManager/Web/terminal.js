@@ -251,7 +251,8 @@
       const lines = [];
       for (let y = 0; y < buf.length; y++) lines.push(buf.getLine(y)?.translateToString(true) ?? '');
       const rule = lines.map((l) => l.trim()).filter((l) => /^─{10,}$/.test(l)).map((l) => l.length);
-      return { id, cols: entry.term.cols, rows: entry.term.rows, ruleWidth: rule.length ? rule[rule.length - 1] : null };
+      const tail = lines.filter((l) => l.trim()).slice(-12);
+      return { id, cols: entry.term.cols, rows: entry.term.rows, ruleWidth: rule.length ? rule[rule.length - 1] : null, tail };
     }),
   };
 

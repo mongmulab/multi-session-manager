@@ -11,17 +11,19 @@ namespace MultiSessionManager.Terminal;
 /// WebView2 안의 xterm.js 와 주고받는 메시지를 맡는다.
 /// 출력은 세션별로 모았다가 16ms 마다 한 번씩 보낸다. Claude 가 화면을 다시 그릴 때
 /// 조각이 수백 개씩 나오는데, 조각마다 PostWebMessage 를 부르면 UI 스레드가 밀린다.
+/// WebView2 가 준비되기 전에 만들어 둘 수 있다. 그 사이의 출력과 메시지는 모아 뒀다가 페이지가 뜨면 보낸다.
 /// </summary>
 public sealed class TerminalBridge : IDisposable
 {
     // .local 은 mDNS 조회 대상이라 쓰지 않는다. WebView2 문서가 권하는 대로 예약 TLD .example 을 쓴다.
     public const string VirtualHost = "msm.example";
 
-    private readonly CoreWebView2 _web;
+    private CoreWebView2? _web;
     private readonly ConcurrentDictionary<string, StringBuilder> _pending = new();
     private readonly DispatcherTimer _flushTimer;
     private bool _ready;
     private readonly List<string> _beforeReady = [];
+    private readonly HashSet<string> _firstOutputLogged = [];
 
     public event Action<string, string>? Input;
     public event Action<string, int, int>? Resized;
@@ -30,7 +32,15 @@ public sealed class TerminalBridge : IDisposable
     public event Action<double, double>? RatiosChanged;
     public event Action<string>? Command;
 
-    public TerminalBridge(CoreWebView2 web, string webRoot)
+    public TerminalBridge()
+    {
+        _flushTimer = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(16) };
+        _flushTimer.Tick += (_, _) => Flush();
+        _flushTimer.Start();
+    }
+
+    /// <summary>WebView2 가 준비되면 붙이고 페이지를 연다.</summary>
+    public void Connect(CoreWebView2 web, string webRoot)
     {
         _web = web;
         _web.SetVirtualHostNameToFolderMapping(VirtualHost, webRoot, CoreWebView2HostResourceAccessKind.Deny);
@@ -40,13 +50,8 @@ public sealed class TerminalBridge : IDisposable
         _web.Settings.IsStatusBarEnabled = false;
         _web.Settings.IsZoomControlEnabled = false;
         _web.WebMessageReceived += OnMessage;
-
-        _flushTimer = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(16) };
-        _flushTimer.Tick += (_, _) => Flush();
-        _flushTimer.Start();
+        _web.Navigate($"https://{VirtualHost}/index.html");
     }
-
-    public void Navigate() => _web.Navigate($"https://{VirtualHost}/index.html");
 
     /// <summary>읽기 스레드에서 불러도 된다.</summary>
     public void QueueOutput(string sessionId, string text)
@@ -63,7 +68,8 @@ public sealed class TerminalBridge : IDisposable
         Send(new { t = "title", id = sessionId, title, status });
     public void ShowExit(string sessionId, string text)
     {
-        Flush();
+        // 페이지가 뜨기 전에 끝난 세션도 출력이 종료 안내보다 먼저 가야 한다.
+        Flush(force: true);
         Send(new { t = "exit", id = sessionId, text });
     }
     public void Remove(string sessionId)
@@ -72,9 +78,9 @@ public sealed class TerminalBridge : IDisposable
         Send(new { t = "dispose", id = sessionId });
     }
 
-    private void Flush()
+    private void Flush(bool force = false)
     {
-        if (!_ready) return;
+        if (!_ready && !force) return;
         foreach (var (id, sb) in _pending)
         {
             string text;
@@ -85,6 +91,9 @@ public sealed class TerminalBridge : IDisposable
                 sb.Clear();
             }
             Send(new { t = "out", id, data = text });
+            // 사용자가 세션 내용을 처음 보게 되는 순간. 기동 시간은 결국 이 값으로 판단한다.
+            if (_ready && _firstOutputLogged.Add(id))
+                AppLog.Info($"첫 출력 표시 {id} · 프로세스 시작 후 {AppLog.SinceProcessStart.TotalMilliseconds:N0}ms");
         }
     }
 
@@ -96,7 +105,7 @@ public sealed class TerminalBridge : IDisposable
             _beforeReady.Add(json);
             return;
         }
-        _web.PostWebMessageAsJson(json);
+        _web!.PostWebMessageAsJson(json);
     }
 
     private void OnMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
@@ -111,7 +120,7 @@ public sealed class TerminalBridge : IDisposable
                     AppLog.Info($"페이지 스크립트 완료 · 탐색 시작 후 {ms.GetInt32()}ms");
                 _ready = true;
                 foreach (var json in _beforeReady)
-                    _web.PostWebMessageAsJson(json);
+                    _web!.PostWebMessageAsJson(json);
                 _beforeReady.Clear();
                 Ready?.Invoke();
                 break;
@@ -136,6 +145,7 @@ public sealed class TerminalBridge : IDisposable
     public void Dispose()
     {
         _flushTimer.Stop();
-        _web.WebMessageReceived -= OnMessage;
+        if (_web is not null)
+            _web.WebMessageReceived -= OnMessage;
     }
 }

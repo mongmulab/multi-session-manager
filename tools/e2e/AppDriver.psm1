@@ -10,25 +10,34 @@ public static class MsmWin {
   [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint flags);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+  [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
   public struct RECT { public int Left, Top, Right, Bottom; }
 }
 "@
 
+# 앱은 모니터 배율을 아는 프로세스라 실제 픽셀로 창 위치를 저장한다. 시험 쪽도 실제 픽셀로 보고 움직여야
+# 125% 같은 배율에서 좌표가 어긋나지 않는다.
+[MsmWin]::SetProcessDPIAware() | Out-Null
 $script:UIA = [System.Windows.Automation.AutomationElement]
 
 function Start-MsmApp {
-    param([string]$Exe, [string]$State, [int]$CdpPort = 0)
+    # Environment: 앱에만 물려줄 환경 변수(시험용 설정 폴더·토큰). 앱이 뜨면 이 셸에서는 지운다.
+    param([string]$Exe, [string]$State, [int]$CdpPort = 0, [hashtable]$Environment = @{})
     $env:MSM_STATE_FILE = $State
     if ($CdpPort -gt 0) { $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$CdpPort" }
+    foreach ($k in $Environment.Keys) { Set-Item "Env:$k" $Environment[$k] }
     try {
         $p = Start-Process -FilePath $Exe -PassThru
     } finally {
         Remove-Item Env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS -ErrorAction SilentlyContinue
+        foreach ($k in $Environment.Keys) { Remove-Item "Env:$k" -ErrorAction SilentlyContinue }
     }
     $deadline = (Get-Date).AddSeconds(20)
     while ($p.MainWindowHandle -eq 0 -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 300; $p.Refresh() }
     if ($p.MainWindowHandle -eq 0) { throw "창이 뜨지 않았습니다" }
-    [MsmWin]::ShowWindow($p.MainWindowHandle, 9) | Out-Null
+    # SW_SHOW: 최대화로 복원된 창을 되돌리지 않는다(SW_RESTORE 는 되돌린다).
+    [MsmWin]::ShowWindow($p.MainWindowHandle, 5) | Out-Null
     $p
 }
 
@@ -70,6 +79,26 @@ function Set-MsmWindowSize([System.Diagnostics.Process]$App, [int]$Width, [int]$
     [MsmWin]::SetWindowPos($App.MainWindowHandle, [IntPtr]::Zero, 0, 0, $Width, $Height, 0x0016) | Out-Null  # NOMOVE|NOZORDER|NOACTIVATE
 }
 
+# 이동과 크기를 한 번에. 좌표는 화면 픽셀이다.
+function Set-MsmWindowRect([System.Diagnostics.Process]$App, [int]$Left, [int]$Top, [int]$Width, [int]$Height) {
+    [MsmWin]::ShowWindow($App.MainWindowHandle, 9) | Out-Null
+    [MsmWin]::SetWindowPos($App.MainWindowHandle, [IntPtr]::Zero, $Left, $Top, $Width, $Height, 0x0014) | Out-Null  # NOZORDER|NOACTIVATE
+}
+
+function Get-MsmWindowRect([System.Diagnostics.Process]$App) {
+    $r = New-Object MsmWin+RECT
+    [MsmWin]::GetWindowRect($App.MainWindowHandle, [ref]$r) | Out-Null
+    [pscustomobject]@{ Left = $r.Left; Top = $r.Top; Width = $r.Right - $r.Left; Height = $r.Bottom - $r.Top; Maximized = [MsmWin]::IsZoomed($App.MainWindowHandle) }
+}
+
+# clone_config.py 로 만든 시험용 설정과 따로 받은 토큰. 사용자의 Claude 설정·로그인은 건드리지 않는다.
+function Get-MsmTestEnvironment([string]$ConfigDir, [string]$TokenFile = (Join-Path $env:USERPROFILE ".msm-e2e-token")) {
+    if (-not (Test-Path $TokenFile)) { throw "시험용 토큰이 없습니다: $TokenFile (claude setup-token 으로 받아 저장)" }
+    @{ CLAUDE_CONFIG_DIR = $ConfigDir; CLAUDE_CODE_OAUTH_TOKEN = (Get-Content $TokenFile -Raw).Trim() }
+}
+
+function Set-MsmMaximized([System.Diagnostics.Process]$App) { [MsmWin]::ShowWindow($App.MainWindowHandle, 3) | Out-Null }
+
 function Get-MsmChildren([System.Diagnostics.Process]$App) {
     Get-CimInstance Win32_Process -Filter "ParentProcessId=$($App.Id)" | Select-Object ProcessId, Name, CommandLine
 }
@@ -78,9 +107,13 @@ function Stop-MsmApp([System.Diagnostics.Process]$App) {
     $kids = Get-MsmChildren $App
     $App.CloseMainWindow() | Out-Null
     if (-not $App.WaitForExit(15000)) { $App.Kill(); throw "15초 안에 끝나지 않았습니다" }
-    Start-Sleep -Seconds 2
-    $left = @($kids | Where-Object { Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue })
-    [pscustomobject]@{ Children = $kids.Count; Left = $left.Count }
+    # Job 을 닫으면 OS 가 자식을 끝내지만, PC 가 바쁘면 몇 초 걸린다. 10초까지 기다려 늦은 것과 남은 것을 가른다.
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        Start-Sleep -Milliseconds 500
+        $left = @($kids | Where-Object { Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue })
+    } while ($left.Count -gt 0 -and $sw.Elapsed.TotalSeconds -lt 10)
+    [pscustomobject]@{ Children = @($kids).Count; Left = $left.Count; LeftNames = ($left.Name -join ","); WaitMs = $sw.ElapsedMilliseconds }
 }
 
 Export-ModuleMember -Function *-Msm*

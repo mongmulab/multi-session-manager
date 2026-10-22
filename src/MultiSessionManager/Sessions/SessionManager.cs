@@ -14,6 +14,9 @@ public sealed class SessionManager : IDisposable
     public ObservableCollection<Session> Sessions { get; } = [];
     public PaneLayout Layout { get; private set; } = new();
 
+    /// <summary>창 위치. 창을 닫을 때 채우고, 그 사이의 다른 저장에서도 지워지지 않게 여기 들고 있는다.</summary>
+    public WindowBounds? Window { get; set; }
+
     public SessionManager(SessionStore store, IAgentAdapter adapter)
     {
         _store = store;
@@ -23,6 +26,7 @@ public sealed class SessionManager : IDisposable
     public void Load()
     {
         var state = _store.Load();
+        Window = state.Window;
         foreach (var record in state.Sessions)
             Sessions.Add(new Session(record));
 
@@ -79,6 +83,7 @@ public sealed class SessionManager : IDisposable
             Sessions = Sessions.Select(s => s.Record).ToList(),
             ActiveSessionId = Layout.FocusedSessionId,
             Layout = Layout,
+            Window = Window,
         });
 
     public IReadOnlyList<string> SessionOrder => Sessions.Select(s => s.Id).ToList();
@@ -94,11 +99,16 @@ public sealed class SessionManager : IDisposable
                 return $"{name} ({i})";
     }
 
+    /// <summary>세션이 다 끝난 뒤에도 남은 자손(Claude 의 SessionEnd 훅 등)을 기다려 주는 시간.</summary>
+    public static TimeSpan ChildGrace { get; set; } = TimeSpan.FromSeconds(10);
+
     public void Dispose()
     {
-        foreach (var session in Sessions)
-            session.Stop();
-        // Job 을 닫으면 Stop 이 놓친 손자 프로세스까지 OS 가 끝낸다.
+        // 하나씩 닫으면 칸마다 종료 대기가 쌓이고, 뒤쪽 세션은 정리할 시간을 못 받는다. 한꺼번에 닫는다.
+        Parallel.ForEach(Sessions.ToList(), session => session.Stop());
+        // Claude 는 끝나면서 SessionEnd 훅(대화 기록 올리기 등)을 띄운다. 그것이 끝날 때까지 조금 더 기다린다.
+        _job.WaitUntilEmpty(ChildGrace);
+        // Job 을 닫으면 그래도 남은 손자 프로세스까지 OS 가 끝낸다.
         _job.Dispose();
     }
 }

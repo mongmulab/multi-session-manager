@@ -31,5 +31,23 @@ public sealed class ProcessJob : IDisposable
             throw new Win32Exception(Marshal.GetLastWin32Error(), "AssignProcessToJobObject 실패");
     }
 
+    /// <summary>지금 Job 안에서 돌고 있는 프로세스 수(자손 포함).</summary>
+    public int ActiveProcesses =>
+        QueryInformationJobObject(_handle, JobObjectBasicAccountingInformation, out var info, Marshal.SizeOf<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>(), IntPtr.Zero)
+            ? (int)info.ActiveProcesses
+            : 0;
+
+    /// <summary>묶인 프로세스가 모두 끝날 때까지 기다린다. 시간 안에 비면 true.</summary>
+    public bool WaitUntilEmpty(TimeSpan timeout)
+    {
+        var deadline = Environment.TickCount64 + (long)timeout.TotalMilliseconds;
+        while (ActiveProcesses > 0)
+        {
+            if (Environment.TickCount64 >= deadline) return false;
+            Thread.Sleep(100);
+        }
+        return true;
+    }
+
     public void Dispose() => _handle.Dispose();
 }
