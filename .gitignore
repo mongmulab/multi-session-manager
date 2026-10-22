@@ -1,0 +1,10 @@
+bin/
+obj/
+*.user
+.vs/
+TestResults/
+*.binlog
+
+# 내부 자료: 원본 검토 보고서와 블로그·영상 원고는 공개 저장소에 올리지 않는다.
+00_doc/
+90_content/

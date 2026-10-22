@@ -1,0 +1,50 @@
+:root {
+  --bg: #1e1e1e;
+  --fg: #d4d4d4;
+  --muted: #8a8a8a;
+}
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  overflow: hidden;
+  font-family: "Malgun Gothic", sans-serif;
+}
+
+#panes {
+  position: absolute;
+  inset: 0;
+}
+
+.pane {
+  position: absolute;
+  inset: 0;
+  padding: 6px 4px 4px 8px;
+  box-sizing: border-box;
+  display: none;
+}
+
+.pane.active {
+  display: block;
+}
+
+.pane .term {
+  width: 100%;
+  height: 100%;
+}
+
+#empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+#empty.hidden {
+  display: none;
+}

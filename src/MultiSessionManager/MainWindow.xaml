@@ -1,0 +1,88 @@
+﻿<Window x:Class="MultiSessionManager.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="AI CLI 멀티 세션 매니저" Height="760" Width="1280"
+        Background="#252526" Foreground="#D4D4D4"
+        FontFamily="Malgun Gothic" FontSize="13"
+        PreviewKeyDown="OnWindowKeyDown">
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="#3A3D41" />
+            <Setter Property="Foreground" Value="#E0E0E0" />
+            <Setter Property="BorderBrush" Value="#4A4D52" />
+            <Setter Property="Padding" Value="8,4" />
+            <Setter Property="Margin" Value="0,0,6,6" />
+            <Setter Property="MinHeight" Value="28" />
+            <!-- 기본 템플릿은 비활성일 때 밝은 회색으로 바뀌어 어두운 화면에서 오히려 눈에 띈다. -->
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="1" CornerRadius="3" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#4A4D52" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#094771" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#007ACC" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.4" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="260" MinWidth="180" />
+            <ColumnDefinition Width="4" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <DockPanel Grid.Column="0" Margin="10,10,6,6">
+            <TextBlock DockPanel.Dock="Top" Text="세션" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,8" />
+            <WrapPanel DockPanel.Dock="Top">
+                <Button x:Name="NewButton" Content="+ 새 세션" Click="OnNewSession" ToolTip="폴더를 골라 Claude Code 세션을 엽니다 (Ctrl+Shift+T)" />
+                <Button x:Name="RenameButton" Content="이름 변경" Click="OnRename" ToolTip="F2 또는 더블클릭" />
+                <Button x:Name="RestartButton" Content="다시 시작" Click="OnRestart" ToolTip="멈춘 세션을 같은 대화로 이어서 띄웁니다" />
+                <Button x:Name="StopButton" Content="중지" Click="OnStop" ToolTip="프로세스만 끝냅니다. 대화 기록은 남습니다" />
+                <Button x:Name="CloseButton" Content="닫기" Click="OnClose" ToolTip="목록에서 지웁니다. Claude 쪽 대화 기록은 지우지 않습니다" />
+            </WrapPanel>
+            <ListBox x:Name="SessionList" Background="#1E1E1E" BorderBrush="#3A3D41" Foreground="#D4D4D4"
+                     HorizontalContentAlignment="Stretch"
+                     SelectionChanged="OnSelectionChanged" MouseDoubleClick="OnListDoubleClick" KeyDown="OnListKeyDown">
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <StackPanel Margin="2,4">
+                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                            <!-- 맑은 고딕은 역슬래시를 ₩ 로 그린다. 경로만 Segoe UI 로 둔다(한글 이름은 대체 글꼴로 나온다). -->
+                            <TextBlock Text="{Binding WorkingDirectory}" FontFamily="Segoe UI" Foreground="#9A9A9A" FontSize="11" TextTrimming="CharacterEllipsis" ToolTip="{Binding WorkingDirectory}" />
+                            <TextBlock Text="{Binding StatusText}" Foreground="#6FB3D2" FontSize="11" />
+                        </StackPanel>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </DockPanel>
+
+        <GridSplitter Grid.Column="1" Width="4" HorizontalAlignment="Stretch" Background="#2D2D30" />
+
+        <wv2:WebView2 x:Name="Web" Grid.Column="2" DefaultBackgroundColor="#1E1E1E" />
+
+        <Border Grid.Row="1" Grid.ColumnSpan="3" Background="#007ACC" Padding="10,3">
+            <TextBlock x:Name="StatusBar" FontFamily="Segoe UI, Malgun Gothic" Foreground="White" FontSize="12" TextTrimming="CharacterEllipsis" />
+        </Border>
+    </Grid>
+</Window>
