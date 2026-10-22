@@ -218,6 +218,9 @@
         if (entry) {
           entry.titleEl.textContent = m.title;
           entry.statusEl.textContent = m.status;
+          // 색은 목록의 상태 점과 같은 규칙(working · waiting · needs-input · failed · running · idle)
+          entry.statusEl.dataset.activity = m.activity || 'idle';
+          entry.pane.classList.toggle('attention', !!m.attention);
         }
         break;
       }

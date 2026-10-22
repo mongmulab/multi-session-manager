@@ -4,6 +4,6 @@
              xmlns:local="clr-namespace:MultiSessionManager"
              StartupUri="MainWindow.xaml">
     <Application.Resources>
-         
+        <ResourceDictionary Source="Theme.xaml" />
     </Application.Resources>
 </Application>

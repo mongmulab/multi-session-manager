@@ -1,10 +1,18 @@
 :root {
-  --bg: #1e1e1e;
-  --fg: #d4d4d4;
+  --bg: #181818;
+  --term: #1e1e1e;
+  --fg: #e6e6e6;
   --muted: #8a8a8a;
-  --head: #252526;
-  --gutter: #2d2d30;
-  --accent: #007acc;
+  --head: #1f1f1f;
+  --head-focused: #252a33;
+  --gutter: #181818;
+  --line: #2b2b2b;
+  --accent: #2f81f7;
+  --working: #3b9eff;
+  --waiting: #3fb950;
+  --needs-input: #d29922;
+  --failed: #f85149;
+  --idle: #5a5a5a;
 }
 
 html, body {
@@ -18,7 +26,7 @@ html, body {
 
 #panes {
   position: absolute;
-  inset: 0;
+  inset: 6px;
   display: grid;
   grid-template-columns: 1fr;
   grid-template-rows: 1fr;
@@ -29,7 +37,10 @@ html, body {
   min-width: 0;
   min-height: 0;
   box-sizing: border-box;
-  border: 1px solid transparent;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--term);
 }
 
 .pane.visible {
@@ -44,6 +55,7 @@ html, body {
   color: var(--muted);
   font-size: 13px;
   background: #1b1b1c;
+  border-style: dashed;
 }
 
 .pane.focused, .slot-empty.focused {
@@ -54,12 +66,18 @@ html, body {
   flex: none;
   display: flex;
   gap: 10px;
-  align-items: baseline;
-  padding: 3px 8px;
+  align-items: center;
+  height: 28px;
+  padding: 0 10px;
   background: var(--head);
+  border-bottom: 1px solid var(--line);
   font-size: 12px;
   white-space: nowrap;
   overflow: hidden;
+}
+
+.pane.focused .pane-head {
+  background: var(--head-focused);
 }
 
 .pane-title {
@@ -68,14 +86,51 @@ html, body {
   text-overflow: ellipsis;
 }
 
+/* 상태: 색 점 + 글. 색은 목록과 같다. */
 .pane-status {
-  color: #6fb3d2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.pane-status::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--idle);
+}
+
+.pane-status[data-activity="working"] { color: var(--working); }
+.pane-status[data-activity="working"]::before { background: var(--working); animation: pulse 1.2s ease-in-out infinite; }
+.pane-status[data-activity="waiting"]::before { background: var(--waiting); }
+.pane-status[data-activity="needs-input"] { color: var(--needs-input); }
+.pane-status[data-activity="needs-input"]::before { background: var(--needs-input); }
+.pane-status[data-activity="failed"] { color: var(--failed); }
+.pane-status[data-activity="failed"]::before { background: var(--failed); }
+
+@keyframes pulse {
+  50% { opacity: 0.35; }
+}
+
+/* 보지 않는 사이 끝난 칸: 머리 오른쪽에 표시 */
+.pane.attention .pane-head::after {
+  content: "새 결과";
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
 }
 
 .pane .term {
   flex: 1;
   min-height: 0;
-  padding: 4px 4px 2px 8px;
+  padding: 6px 4px 2px 10px;
+  background: var(--term);
 }
 
 .gutter {
@@ -117,3 +172,9 @@ body.dragging-row, body.dragging-row * { cursor: row-resize !important; user-sel
 #empty.hidden {
   display: none;
 }
+
+/* 터미널 스크롤바: 목록과 같은 얇은 모양 */
+.xterm-viewport::-webkit-scrollbar { width: 8px; }
+.xterm-viewport::-webkit-scrollbar-track { background: transparent; }
+.xterm-viewport::-webkit-scrollbar-thumb { background: #4a4a4a; border-radius: 4px; }
+.xterm-viewport::-webkit-scrollbar-thumb:hover { background: #6a6a6a; }

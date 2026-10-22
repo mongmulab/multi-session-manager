@@ -64,8 +64,8 @@ public sealed class TerminalBridge : IDisposable
     public void ApplyLayout(PaneLayout layout) =>
         Send(new { t = "layout", mode = layout.Mode, slots = layout.Slots, focus = layout.Focus, col = layout.ColumnRatio, row = layout.RowRatio });
 
-    public void SetTitle(string sessionId, string title, string status) =>
-        Send(new { t = "title", id = sessionId, title, status });
+    public void SetTitle(string sessionId, string title, string status, string activity = "idle", bool attention = false) =>
+        Send(new { t = "title", id = sessionId, title, status, activity, attention });
     public void ShowExit(string sessionId, string text)
     {
         // 페이지가 뜨기 전에 끝난 세션도 출력이 종료 안내보다 먼저 가야 한다.

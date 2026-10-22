@@ -9,6 +9,7 @@ public partial class RenameDialog : Window
     public RenameDialog(string current)
     {
         InitializeComponent();
+        SourceInitialized += (_, _) => NativeWindow.UseDarkTitleBar(this, 0x00262525);
         NameBox.Text = current;
         Loaded += (_, _) =>
         {

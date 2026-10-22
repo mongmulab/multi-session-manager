@@ -1,4 +1,7 @@
-﻿using System.ComponentModel;
+﻿using System.Collections.Specialized;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -14,9 +17,6 @@ namespace MultiSessionManager;
 
 public partial class MainWindow : Window
 {
-    private static readonly Brush ActiveLayoutBrush = new SolidColorBrush(Color.FromRgb(0x09, 0x47, 0x71));
-    private static readonly Brush NormalButtonBrush = new SolidColorBrush(Color.FromRgb(0x3A, 0x3D, 0x41));
-
     private readonly SessionManager? _manager;
     private readonly string? _startupError;
     private readonly TerminalBridge _bridge = new();
@@ -71,6 +71,7 @@ public partial class MainWindow : Window
                 PushTitle(session);
             }
             SessionList.ItemsSource = _manager.Sessions;
+            _manager.Sessions.CollectionChanged += (_, _) => UpdateSummary();
             PushLayout();
         }
 
@@ -78,7 +79,9 @@ public partial class MainWindow : Window
         Loaded += OnLoaded;
         Closing += OnClosing;
         Activated += (_, _) => ClearAttention();
+        VersionText.Text = "v" + (Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "");
         UpdateButtons();
+        UpdateSummary();
     }
 
     private static Task<CoreWebView2Environment> CreateWebEnvironmentAsync()
@@ -89,6 +92,7 @@ public partial class MainWindow : Window
 
     private void OnSourceInitialized(object? sender, EventArgs e)
     {
+        NativeWindow.UseDarkTitleBar(this);
         if (_manager?.Window is { } bounds)
             WindowPlacement.Apply(new WindowInteropHelper(this).Handle, bounds);
     }
@@ -156,11 +160,12 @@ public partial class MainWindow : Window
         });
         session.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName is nameof(Session.Status) or nameof(Session.StatusText) or nameof(Session.Title))
+            if (e.PropertyName is nameof(Session.Status) or nameof(Session.StatusText) or nameof(Session.Title) or nameof(Session.NeedsAttention))
                 Dispatcher.BeginInvoke(() =>
                 {
                     PushTitle(session);
                     UpdateButtons();
+                    UpdateSummary();
                 });
         };
     }
@@ -171,7 +176,11 @@ public partial class MainWindow : Window
         session.ReportActivity(activity);
         // 지금 보고 있는 세션이 아니면 표시를 남긴다. 보는 순간 지운다.
         if (activity is AgentActivity.Waiting or AgentActivity.NeedsInput or AgentActivity.Failed && !IsWatching(session))
+        {
             session.NeedsAttention = true;
+            // 다른 창에서 일하는 중이면 작업 표시줄 단추로 알린다.
+            NativeWindow.FlashUntilFocused(this);
+        }
         UpdateFocusStatus();
     }
 
@@ -183,7 +192,23 @@ public partial class MainWindow : Window
             session.NeedsAttention = false;
     }
 
-    private void PushTitle(Session session) => _bridge.SetTitle(session.Id, session.Title, session.StatusText);
+    private void PushTitle(Session session) =>
+        _bridge.SetTitle(session.Id, session.Title, session.StatusText, ActivityKey(session), session.NeedsAttention);
+
+    // 칸 머리 색을 고르는 이름. 목록의 상태 점과 같은 규칙이다.
+    private static string ActivityKey(Session session) => session.Status switch
+    {
+        SessionStatus.Running => session.Activity switch
+        {
+            AgentActivity.Working => "working",
+            AgentActivity.Waiting => "waiting",
+            AgentActivity.NeedsInput => "needs-input",
+            AgentActivity.Failed => "failed",
+            _ => "running",
+        },
+        SessionStatus.Failed => "failed",
+        _ => "idle",
+    };
 
     /// <summary>칸 배치를 화면에 보내고, 목록 선택을 포커스 칸의 세션에 맞춘다.</summary>
     private void PushLayout()
@@ -195,7 +220,7 @@ public partial class MainWindow : Window
         _syncingSelection = false;
 
         foreach (var (button, mode) in new[] { (Layout1Button, 1), (Layout2Button, 2), (Layout4Button, 4) })
-            button.Background = Layout.Mode == mode ? ActiveLayoutBrush : NormalButtonBrush;
+            button.Tag = Layout.Mode == mode ? "on" : null;
         UpdateButtons();
         UpdateFocusStatus();
         ClearAttention();
@@ -301,9 +326,9 @@ public partial class MainWindow : Window
         if (Selected is not { } session) return;
         if (session.IsRunning)
         {
-            var answer = MessageBox.Show(this, $"'{session.Title}' 은(는) 실행 중입니다. 프로세스를 끝내고 목록에서 지울까요?\n대화 기록은 Claude 쪽에 남습니다.",
-                "세션 닫기", MessageBoxButton.OKCancel, MessageBoxImage.Question);
-            if (answer != MessageBoxResult.OK) return;
+            if (!ConfirmDialog.Ask(this, "세션 닫기", $"'{session.Title}' 을(를) 닫을까요?",
+                    "실행 중인 Claude 를 끝내고 목록에서 지웁니다. 대화 기록은 Claude 쪽에 남아 있어, 같은 폴더에서 claude --resume 으로 다시 열 수 있습니다.", "닫기"))
+                return;
         }
         _manager!.Remove(session);
         _bridge.Remove(session.Id);
@@ -327,7 +352,7 @@ public partial class MainWindow : Window
 
     private void OnLayoutButton(object sender, RoutedEventArgs e)
     {
-        if (sender is FrameworkElement { Tag: string tag } && int.TryParse(tag, out var mode))
+        if (sender is Button { CommandParameter: string tag } && int.TryParse(tag, out var mode))
             SetLayoutMode(mode);
     }
 
@@ -347,6 +372,42 @@ public partial class MainWindow : Window
             OnRename(null, null);
             e.Handled = true;
         }
+        else if (e.Key == Key.Delete)
+        {
+            OnClose(this, new RoutedEventArgs());
+            e.Handled = true;
+        }
+    }
+
+    // 오른쪽 클릭한 항목을 먼저 고른다. 메뉴는 늘 "고른 세션" 에 대해 동작한다.
+    private void OnListRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (ItemsControl.ContainerFromElement(SessionList, (DependencyObject)e.OriginalSource) is ListBoxItem item)
+            item.IsSelected = true;
+        else
+            e.Handled = true; // 빈 곳에서는 메뉴를 띄우지 않는다
+    }
+
+    private void OnMoreClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: Session session } button) return;
+        SessionList.SelectedItem = session;
+        var menu = (ContextMenu)Resources["SessionMenu"];
+        menu.PlacementTarget = button;
+        menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+        menu.IsOpen = true;
+        e.Handled = true;
+    }
+
+    private void OnOpenFolder(object sender, RoutedEventArgs e)
+    {
+        if (Selected is not { } session) return;
+        if (!Directory.Exists(session.WorkingDirectory))
+        {
+            SetStatus($"폴더가 없습니다: {session.WorkingDirectory}");
+            return;
+        }
+        Process.Start(new ProcessStartInfo("explorer.exe", $"\"{session.WorkingDirectory}\"") { UseShellExecute = true });
     }
 
     private void OnWindowKeyDown(object sender, KeyEventArgs e)
@@ -403,4 +464,27 @@ public partial class MainWindow : Window
     }
 
     private void SetStatus(string text) => StatusBar.Text = text;
+
+    // 상태줄 오른쪽: 상태별 세션 수(있는 것만). 목록을 다 훑지 않아도 몇 개가 나를 기다리는지 보인다.
+    private void UpdateSummary()
+    {
+        var sessions = _manager?.Sessions ?? [];
+        SessionCount.Text = sessions.Count.ToString();
+        EmptyState.Visibility = _manager is not null && sessions.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+
+        SummaryPanel.Children.Clear();
+        void Add(int count, string label, string brush)
+        {
+            if (count == 0) return;
+            var panel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(12, 0, 0, 0) };
+            panel.Children.Add(new System.Windows.Shapes.Ellipse { Width = 7, Height = 7, Fill = (Brush)FindResource(brush), Margin = new Thickness(0, 1, 5, 0), VerticalAlignment = VerticalAlignment.Center });
+            panel.Children.Add(new TextBlock { Text = $"{label} {count}", FontSize = 11, Foreground = (Brush)FindResource("SubtleTextBrush"), VerticalAlignment = VerticalAlignment.Center });
+            SummaryPanel.Children.Add(panel);
+        }
+        var running = sessions.Where(s => s.Status == SessionStatus.Running).ToList();
+        Add(running.Count(s => s.Activity == AgentActivity.NeedsInput), "확인 필요", "NeedsInputBrush");
+        Add(running.Count(s => s.Activity == AgentActivity.Working), "작업 중", "WorkingBrush");
+        Add(running.Count(s => s.Activity == AgentActivity.Waiting), "입력 대기", "WaitingBrush");
+        Add(running.Count(s => s.Activity == AgentActivity.Failed) + sessions.Count(s => s.Status == SessionStatus.Failed), "오류", "FailedBrush");
+    }
 }
