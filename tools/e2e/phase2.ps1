@@ -3,7 +3,8 @@
     [string]$OutDir = (Join-Path $env:TEMP "msm-e2e-phase2"),
     [string]$DemoRoot = "D:\lab\msm-demo",
     [int]$Port = 9334,
-    [int]$Settle = 8
+    [int]$Settle = 8,
+    [string]$ConfigDir = (Join-Path $env:TEMP "msm-e2e-config")
 )
 # 2단계 E2E: 1→2→4칸, 칸막이 끌기, 창 크기 변경 뒤 Claude 가 새 폭으로 다시 그리는지,
 # 다시 켰을 때 배치가 돌아오는지, 닫으면 프로세스가 남지 않는지 본다.
@@ -23,6 +24,10 @@ $sessions = for ($i = 0; $i -lt $names.Count; $i++) {
 # 첫 세션은 1단계 시험에서 대화가 남아 있는 ID 를 그대로 써서 재개 화면도 함께 본다.
 $sessions[0].AgentSessionId = "4f0c6a2e-1b7d-4c55-9a51-0d6e3f1a7b01"
 @{ Version = 1; Sessions = $sessions; ActiveSessionId = "s0" } | ConvertTo-Json -Depth 5 | Set-Content $state -Encoding utf8
+# 사용자 설정을 복제한 시험용 Claude 설정(훅·상태줄은 기록기). 사용자 훅이 시험 세션을 밖으로 보내지 않게 한다.
+python (Join-Path $PSScriptRoot "clone_config.py") $ConfigDir @($sessions | ForEach-Object { $_.WorkingDirectory -replace '\\', '/' })
+if ($LASTEXITCODE) { throw "시험 설정을 만들지 못했습니다" }
+$testEnv = Get-MsmTestEnvironment $ConfigDir
 
 $results = [System.Collections.Generic.List[object]]::new()
 function Check([string]$Name, [bool]$Ok, [string]$Detail) {
@@ -34,9 +39,19 @@ function Layout() { (node $cdp $Port $OutDir "eval:JSON.stringify(window.__msm.l
 function ClaudeCount($app) { @(Get-MsmChildren $app | Where-Object Name -eq "claude.exe").Count }
 # Claude 가 그린 가로줄이 칸 폭을 따라왔는지. 테두리 여백 때문에 몇 칸 짧을 수 있다.
 function Fits($pane) { $null -ne $pane.ruleWidth -and $pane.ruleWidth -le $pane.cols -and $pane.ruleWidth -ge ($pane.cols - 4) }
+# 정해진 시간 대신 보이는 칸이 모두 그릴 때까지 기다린다(바쁜 PC 에서는 첫 화면이 20초 가까이 걸린다).
+function Drawn([int]$Count, [int]$Seconds = 60) {
+    $deadline = (Get-Date).AddSeconds($Seconds)
+    do {
+        Start-Sleep -Seconds 1
+        try { $s = Snap 2>$null } catch { $s = @() }
+    } while (-not ((@($s).Count -eq $Count) -and (@($s | Where-Object { -not (Fits $_) }).Count -eq 0)) -and (Get-Date) -lt $deadline)
+    Start-Sleep -Seconds 1
+    Snap
+}
 function Describe($snap) { ($snap | ForEach-Object { if ($_.empty) { "(빈칸)" } else { "$($_.id) $($_.cols)x$($_.rows) 줄$($_.ruleWidth)" } }) -join " | " }
 
-$app = Start-MsmApp -Exe $Exe -State $state -CdpPort $Port
+$app = Start-MsmApp -Exe $Exe -State $state -CdpPort $Port -Environment $testEnv
 Start-Sleep -Seconds $Settle
 Set-MsmWindowSize $app 1600 950
 Start-Sleep -Seconds 3
@@ -48,16 +63,14 @@ Save-MsmShot $app (Join-Path $OutDir "p2_01_one.png")
 
 # 2칸
 Invoke-MsmButton $app "2칸"
-Start-Sleep -Seconds $Settle
-$s = Snap
+$s = Drawn 2
 Check "2칸: 두 칸이 차고 둘 다 실행" (($s.Count -eq 2) -and ((ClaudeCount $app) -eq 2)) "claude $(ClaudeCount $app)개 · $(Describe $s)"
 Check "2칸: Claude 가 칸 폭에 맞춰 그림" ((@($s | Where-Object { -not (Fits $_) }).Count -eq 0)) (Describe $s)
 Save-MsmShot $app (Join-Path $OutDir "p2_02_two.png")
 
 # 4칸
 Invoke-MsmButton $app "4칸"
-Start-Sleep -Seconds $Settle
-$s = Snap
+$s = Drawn 4
 Check "4칸: 네 칸이 차고 넷 다 실행" (($s.Count -eq 4) -and ((ClaudeCount $app) -eq 4)) "claude $(ClaudeCount $app)개 · $(Describe $s)"
 Check "4칸: Claude 가 칸 폭에 맞춰 그림" ((@($s | Where-Object { -not (Fits $_) }).Count -eq 0)) (Describe $s)
 Save-MsmShot $app (Join-Path $OutDir "p2_03_four.png")
@@ -120,7 +133,7 @@ $saved = Layout
 $stop = Stop-MsmApp $app
 Check "종료: 자식 프로세스가 남지 않음" ($stop.Left -eq 0) "자식 $($stop.Children)개 중 남은 것 $($stop.Left)개"
 
-$app = Start-MsmApp -Exe $Exe -State $state -CdpPort $Port
+$app = Start-MsmApp -Exe $Exe -State $state -CdpPort $Port -Environment $testEnv
 Start-Sleep -Seconds $Settle
 $l = Layout
 Check "재기동: 4칸 배치와 칸막이 비율 복원" (($l.mode -eq 4) -and (($l.slots -join ',') -eq ($saved.slots -join ',')) -and ([math]::Abs($l.col - $saved.col) -lt 0.001) -and ([math]::Abs($l.row - $saved.row) -lt 0.001) -and ([math]::Abs($l.col - 0.5) -gt 0.1)) "mode=$($l.mode) slots=$($l.slots -join ',') col=$("{0:N3}" -f $l.col) row=$("{0:N3}" -f $l.row)"

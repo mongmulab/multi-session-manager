@@ -145,7 +145,7 @@ public class PseudoConsoleProcessTests
     [NodeFact]
     public async Task Dispose_sends_the_quit_input_before_closing_the_console()
     {
-        // Claude 처럼 키를 날것으로 읽다가 Ctrl+C()가 오면 나간다. 콘솔을 먼저 닫았다면 SIGHUP 이 먼저 온다.
+        // Claude 처럼 키를 날것으로 읽다가 Ctrl+C(\u0003)가 오면 나간다. 콘솔을 먼저 닫았다면 SIGHUP 이 먼저 온다.
         var dir = Path.Combine(Path.GetTempPath(), "msm-quit-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
         try
@@ -161,7 +161,7 @@ public class PseudoConsoleProcessTests
                 console.log('quit-ready');
                 setInterval(() => {}, 1000);
                 """);
-            var (p, cap) = Start(new PtyStartInfo(NodeFactAttribute.Node!, [script], dir, EnvironmentBlock.FromCurrentProcess(), 100, 30, [""]));
+            var (p, cap) = Start(new PtyStartInfo(NodeFactAttribute.Node!, [script], dir, EnvironmentBlock.FromCurrentProcess(), 100, 30, ["\u0003"]));
             Assert.True(await cap.WaitFor("quit-ready"), "node 가 떠야 한다: " + cap.Text);
 
             p.Dispose();

@@ -22,6 +22,8 @@ public sealed class Session : INotifyPropertyChanged
     private PseudoConsoleProcess? _process;
     private SessionStatus _status = SessionStatus.Idle;
     private string _statusDetail = "";
+    private AgentActivity _activity;
+    private bool _needsAttention;
 
     public SessionRecord Record { get; }
 
@@ -49,6 +51,13 @@ public sealed class Session : INotifyPropertyChanged
         {
             if (_status == value) return;
             _status = value;
+            // 프로세스가 바뀌면 지난 알림은 의미가 없다.
+            if (value != SessionStatus.Running)
+            {
+                _activity = AgentActivity.Unknown;
+                NeedsAttention = false;
+                OnPropertyChanged(nameof(Activity));
+            }
             OnPropertyChanged();
             OnPropertyChanged(nameof(StatusText));
         }
@@ -65,11 +74,50 @@ public sealed class Session : INotifyPropertyChanged
         }
     }
 
+    /// <summary>CLI 가 Hook 으로 알려 온 상태. 실행 중일 때만 뜻이 있다.</summary>
+    public AgentActivity Activity
+    {
+        get => _activity;
+        private set
+        {
+            if (_activity == value) return;
+            _activity = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(StatusText));
+        }
+    }
+
+    /// <summary>보고 있지 않을 때 턴이 끝났거나 답을 기다리게 됐다. 그 세션을 보면 지운다.</summary>
+    public bool NeedsAttention
+    {
+        get => _needsAttention;
+        set
+        {
+            if (_needsAttention == value) return;
+            _needsAttention = value;
+            OnPropertyChanged();
+        }
+    }
+
+    /// <summary>Hook 알림을 반영한다. 실행 중이 아니면(끝난 뒤 늦게 온 알림) 버린다.</summary>
+    public void ReportActivity(AgentActivity activity)
+    {
+        if (Status != SessionStatus.Running) return;
+        Activity = activity;
+    }
+
     public string StatusText => Status switch
     {
         SessionStatus.Idle => "대기",
         SessionStatus.Starting => "시작 중",
-        SessionStatus.Running => "실행 중",
+        SessionStatus.Running => Activity switch
+        {
+            AgentActivity.Working => "작업 중",
+            AgentActivity.Waiting => "입력 대기",
+            AgentActivity.NeedsInput => "확인 필요",
+            AgentActivity.Failed => "오류",
+            _ => "실행 중",
+        },
         SessionStatus.Exited => $"종료됨 {StatusDetail}".TrimEnd(),
         SessionStatus.Failed => $"시작 실패 {StatusDetail}".TrimEnd(),
         _ => "",
@@ -151,7 +199,24 @@ public sealed class Session : INotifyPropertyChanged
         ThreadPool.QueueUserWorkItem(_ => process.Dispose());
     }
 
-    public void Write(string text) => _process?.Write(text);
+    public void Write(string text)
+    {
+        _process?.Write(text);
+        if (Status == SessionStatus.Running)
+            Activity = AfterInput(Activity, text);
+    }
+
+    /// <summary>
+    /// 사용자가 턴을 끊으면(Esc · Ctrl+C) Claude 는 Stop Hook 을 보내지 않는다. 권한 확인을 Esc 로 거절할 때도 같다.
+    /// 그대로 두면 "작업 중" · "확인 필요" 에 머물러서, 키 입력으로 보탠다.
+    /// </summary>
+    internal static AgentActivity AfterInput(AgentActivity current, string input) => (current, input) switch
+    {
+        (AgentActivity.Working or AgentActivity.NeedsInput, "\u001b" or "\u0003") => AgentActivity.Waiting,
+        // 확인 화면에 다른 답을 했다. 허락이면 곧 PostToolUse 가, 아니면 Stop 이 온다. 그때까지는 모른다.
+        (AgentActivity.NeedsInput, _) => AgentActivity.Unknown,
+        _ => current,
+    };
 
     public void Resize(int columns, int rows) => _process?.Resize(columns, rows);
 

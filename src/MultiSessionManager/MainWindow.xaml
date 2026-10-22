@@ -76,8 +76,33 @@
                             <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                             <!-- 맑은 고딕은 역슬래시를 ₩ 로 그린다. 경로만 Segoe UI 로 둔다(한글 이름은 대체 글꼴로 나온다). -->
                             <TextBlock Text="{Binding WorkingDirectory}" FontFamily="Segoe UI" Foreground="#9A9A9A" FontSize="11" TextTrimming="CharacterEllipsis" ToolTip="{Binding WorkingDirectory}" />
-                            <TextBlock Text="{Binding StatusText}" Foreground="#6FB3D2" FontSize="11" />
+                            <StackPanel Orientation="Horizontal">
+                                <!-- 상태 점: 작업 중 파랑 · 입력 대기 초록 · 확인 필요 주황 · 오류 빨강 -->
+                                <Ellipse x:Name="Dot" Width="7" Height="7" Margin="0,1,5,0" VerticalAlignment="Center" Fill="#6A6A6A" />
+                                <TextBlock x:Name="State" Text="{Binding StatusText}" Foreground="#9A9A9A" FontSize="11" />
+                                <TextBlock x:Name="Fresh" Text=" · 새 결과" Foreground="#E0E0E0" FontSize="11" FontWeight="SemiBold" Visibility="Collapsed" />
+                            </StackPanel>
                         </StackPanel>
+                        <DataTemplate.Triggers>
+                            <DataTrigger Binding="{Binding Activity}" Value="Working">
+                                <Setter TargetName="Dot" Property="Fill" Value="#3794FF" />
+                                <Setter TargetName="State" Property="Foreground" Value="#6FB3D2" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding Activity}" Value="Waiting">
+                                <Setter TargetName="Dot" Property="Fill" Value="#4EC97B" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding Activity}" Value="NeedsInput">
+                                <Setter TargetName="Dot" Property="Fill" Value="#E5A33B" />
+                                <Setter TargetName="State" Property="Foreground" Value="#E5A33B" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding Activity}" Value="Failed">
+                                <Setter TargetName="Dot" Property="Fill" Value="#F14C4C" />
+                                <Setter TargetName="State" Property="Foreground" Value="#F14C4C" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding NeedsAttention}" Value="True">
+                                <Setter TargetName="Fresh" Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </DataTemplate.Triggers>
                     </DataTemplate>
                 </ListBox.ItemTemplate>
             </ListBox>

@@ -21,6 +21,7 @@ public partial class MainWindow : Window
     private readonly string? _startupError;
     private readonly TerminalBridge _bridge = new();
     private readonly Task<CoreWebView2Environment>? _webEnvironment;
+    private readonly HookServer? _hooks;
 
     // 세션마다 xterm 이 마지막으로 알려 준 크기. 다시 시작할 때 그 크기로 띄운다.
     private readonly Dictionary<string, (int Cols, int Rows)> _sizes = [];
@@ -47,6 +48,19 @@ public partial class MainWindow : Window
             // 브라우저 환경은 창을 그리는 동안 따로 만든다. 창이 뜨기를 기다릴 이유가 없다.
             _webEnvironment = CreateWebEnvironmentAsync();
 
+            // 세션 상태(작업 중·입력 대기·확인 필요)는 Claude 의 Hook 으로 받는다. 받지 못해도 세션은 그대로 돈다.
+            try
+            {
+                _hooks = new HookServer();
+                _hooks.Received += (id, activity) => Dispatcher.BeginInvoke(() => OnHook(id, activity));
+                adapter.Hooks = _hooks;
+                AppLog.Info($"Hook 수신 127.0.0.1:{_hooks.Port}");
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("Hook 수신기를 열지 못했습니다. 상태 표시 없이 진행합니다", ex);
+            }
+
             _manager = new SessionManager(new SessionStore(SessionStore.DefaultPath()), adapter);
             _manager.Load();
             WireBridge();
@@ -63,6 +77,7 @@ public partial class MainWindow : Window
         SourceInitialized += OnSourceInitialized;
         Loaded += OnLoaded;
         Closing += OnClosing;
+        Activated += (_, _) => ClearAttention();
         UpdateButtons();
     }
 
@@ -150,6 +165,24 @@ public partial class MainWindow : Window
         };
     }
 
+    private void OnHook(string id, AgentActivity activity)
+    {
+        if (Find(id) is not { } session) return;
+        session.ReportActivity(activity);
+        // 지금 보고 있는 세션이 아니면 표시를 남긴다. 보는 순간 지운다.
+        if (activity is AgentActivity.Waiting or AgentActivity.NeedsInput or AgentActivity.Failed && !IsWatching(session))
+            session.NeedsAttention = true;
+        UpdateFocusStatus();
+    }
+
+    private bool IsWatching(Session session) => IsActive && Layout.FocusedSessionId == session.Id;
+
+    private void ClearAttention()
+    {
+        if (IsActive && Find(Layout.FocusedSessionId) is { } session)
+            session.NeedsAttention = false;
+    }
+
     private void PushTitle(Session session) => _bridge.SetTitle(session.Id, session.Title, session.StatusText);
 
     /// <summary>칸 배치를 화면에 보내고, 목록 선택을 포커스 칸의 세션에 맞춘다.</summary>
@@ -165,6 +198,7 @@ public partial class MainWindow : Window
             button.Background = Layout.Mode == mode ? ActiveLayoutBrush : NormalButtonBrush;
         UpdateButtons();
         UpdateFocusStatus();
+        ClearAttention();
         _manager!.Save();
     }
 
@@ -345,6 +379,7 @@ public partial class MainWindow : Window
         Hide();
         _bridge.Dispose();
         _manager.Dispose();
+        _hooks?.Dispose();
     }
 
     private Session? Selected => SessionList.SelectedItem as Session;

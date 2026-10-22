@@ -7,7 +7,9 @@
 자격 증명은 옮기지 않는다(.credentials.json 의 갱신 토큰을 같이 쓰면 원래 세션이 로그아웃될 수 있다).
 시험 때 CLAUDE_CODE_OAUTH_TOKEN 으로 따로 넣는다.
 
-    python clone_config.py <대상 폴더> <신뢰할 폴더>...
+    python clone_config.py <대상 폴더> [--permission-mode=default] <신뢰할 폴더>...
+
+--permission-mode 를 주면 권한 확인 화면이 뜨게 할 수 있다(사용자 설정이 자동 승인이어도).
 """
 import json
 import os
@@ -38,7 +40,7 @@ if kind == "statusline":
 '''
 
 
-def main(dest: Path, trusted: list[str]) -> None:
+def main(dest: Path, trusted: list[str], permission_mode: str | None = None) -> None:
     if dest.exists():
         # 마켓플레이스의 .git 팩 파일은 읽기 전용이라 그냥은 안 지워진다.
         shutil.rmtree(dest, onexc=lambda f, p, _: (os.chmod(p, stat.S_IWRITE), f(p)))
@@ -59,6 +61,8 @@ def main(dest: Path, trusted: list[str]) -> None:
     settings["model"] = "haiku"
     settings["autoUpdatesChannel"] = "stable"
     settings.pop("autoMode", None)
+    if permission_mode:
+        settings.setdefault("permissions", {})["defaultMode"] = permission_mode
     (dest / "settings.json").write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
 
     for name in ("skills", "commands", "agents"):
@@ -97,4 +101,6 @@ def main(dest: Path, trusted: list[str]) -> None:
 
 
 if __name__ == "__main__":
-    main(Path(sys.argv[1]), sys.argv[2:])
+    rest = sys.argv[2:]
+    mode = next((a.split("=", 1)[1] for a in rest if a.startswith("--permission-mode=")), None)
+    main(Path(sys.argv[1]), [a for a in rest if not a.startswith("--")], mode)

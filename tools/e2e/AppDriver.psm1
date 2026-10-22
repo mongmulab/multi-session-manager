@@ -23,7 +23,11 @@ $script:UIA = [System.Windows.Automation.AutomationElement]
 
 function Start-MsmApp {
     # Environment: 앱에만 물려줄 환경 변수(시험용 설정 폴더·토큰). 앱이 뜨면 이 셸에서는 지운다.
-    param([string]$Exe, [string]$State, [int]$CdpPort = 0, [hashtable]$Environment = @{})
+    # 사용자 Claude 설정으로 띄우면 시험 세션이 사용자의 훅(외부 전송 등)을 그대로 탄다. 시험용 설정 없이는 띄우지 않는다.
+    param([string]$Exe, [string]$State, [int]$CdpPort = 0, [hashtable]$Environment = @{}, [switch]$UseRealConfig)
+    if (-not $UseRealConfig -and -not $Environment.ContainsKey("CLAUDE_CONFIG_DIR")) {
+        throw "시험용 Claude 설정이 없습니다. -Environment (Get-MsmTestEnvironment <폴더>) 를 넘기거나, 정말 사용자 설정으로 돌릴 때만 -UseRealConfig"
+    }
     $env:MSM_STATE_FILE = $State
     if ($CdpPort -gt 0) { $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$CdpPort" }
     foreach ($k in $Environment.Keys) { Set-Item "Env:$k" $Environment[$k] }
@@ -47,6 +51,27 @@ function Select-MsmSession([System.Diagnostics.Process]$App, [int]$Index) {
     $cond = New-Object System.Windows.Automation.PropertyCondition ($script:UIA::ControlTypeProperty), ([System.Windows.Automation.ControlType]::ListItem)
     $items = (Get-MsmRoot $App).FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond)
     $items[$Index].GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+}
+
+# 목록 항목마다 보이는 글(이름 · 폴더 · 상태 …)을 " | " 로 이어 돌려준다.
+function Get-MsmListText([System.Diagnostics.Process]$App) {
+    $item = New-Object System.Windows.Automation.PropertyCondition ($script:UIA::ControlTypeProperty), ([System.Windows.Automation.ControlType]::ListItem)
+    $text = New-Object System.Windows.Automation.PropertyCondition ($script:UIA::ControlTypeProperty), ([System.Windows.Automation.ControlType]::Text)
+    foreach ($i in (Get-MsmRoot $App).FindAll([System.Windows.Automation.TreeScope]::Descendants, $item)) {
+        (@($i.FindAll([System.Windows.Automation.TreeScope]::Descendants, $text) | ForEach-Object { $_.Current.Name }) -join " | ")
+    }
+}
+
+# 자손 전체(자식의 자식까지). 앱이 강제로 죽은 뒤 무엇이 남았는지 보려면 미리 받아 둔다.
+function Get-MsmDescendants([int]$ParentId) {
+    $all = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name)
+    $found = [System.Collections.Generic.List[object]]::new()
+    $queue = [System.Collections.Generic.Queue[int]]::new(); $queue.Enqueue($ParentId)
+    while ($queue.Count) {
+        $p = $queue.Dequeue()
+        foreach ($c in $all | Where-Object { $_.ParentProcessId -eq $p -and $_.ProcessId -ne $p }) { $found.Add($c); $queue.Enqueue($c.ProcessId) }
+    }
+    $found
 }
 
 function Invoke-MsmButton([System.Diagnostics.Process]$App, [string]$Name) {

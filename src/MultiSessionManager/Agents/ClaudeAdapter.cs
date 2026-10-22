@@ -26,6 +26,27 @@ public sealed class ClaudeAdapter : IAgentAdapter
 
     public string Kind => "claude";
 
+    /// <summary>
+    /// 상태 알림을 받을 곳. 있으면 세션마다 Hook 설정 파일을 만들어 <c>--settings</c> 로 넘긴다.
+    /// 사용자의 settings.json 은 고치지 않는다. Claude 는 이 Hook 을 사용자 Hook 에 더해서 돌린다(바꿔치지 않는다).
+    /// </summary>
+    public HookServer? Hooks { get; set; }
+
+    /// <summary>세션별 Hook 설정 파일을 두는 곳.</summary>
+    public string HookSettingsDirectory { get; set; } =
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MultiSessionManager", "hooks");
+
+    // 상태에 쓰는 Hook 만 건다. 짧게 끊어, 앱이 응답하지 못해도 Claude 가 기다리지 않게 한다.
+    internal static readonly string[] HookEvents =
+        ["UserPromptSubmit", "PostToolUse", "PostToolUseFailure", "Stop", "StopFailure", "PermissionRequest", "Notification"];
+
+    internal static string HookSettingsJson(string url)
+    {
+        var hook = new[] { new { type = "http", url, timeout = 3 } };
+        var hooks = HookEvents.ToDictionary(e => e, e => (object)(e.StartsWith("PostToolUse") ? new object[] { new { matcher = "*", hooks = hook } } : new object[] { new { hooks = hook } }));
+        return System.Text.Json.JsonSerializer.Serialize(new { hooks });
+    }
+
     public ClaudeAdapter(string executable, string? projectsDirectory = null, Func<Dictionary<string, string>>? baseEnvironment = null)
     {
         _executable = executable;
@@ -74,9 +95,17 @@ public sealed class ClaudeAdapter : IAgentAdapter
         env["TERM"] = "xterm-256color";
         env["COLORTERM"] = "truecolor";
 
-        var args = BuildArguments(session, resumes);
+        var args = BuildArguments(session, resumes).ToList();
+        if (Hooks is not null)
+        {
+            // 포트가 실행마다 바뀌므로 띄울 때마다 새로 쓴다.
+            Directory.CreateDirectory(HookSettingsDirectory);
+            var path = Path.Combine(HookSettingsDirectory, session.Id + ".json");
+            File.WriteAllText(path, HookSettingsJson(Hooks.UrlFor(session.Id)));
+            args.AddRange(["--settings", path]);
+        }
         // Ctrl+C: 입력 중이면 지우고, 답하는 중이면 멈추고, 빈 입력에서 두 번이면 나간다. 세 번이면 어느 경우든 나간다.
-        IReadOnlyList<string> quit = ["", "", ""];
+        IReadOnlyList<string> quit = ["\u0003", "\u0003", "\u0003"];
         if (ExecutableLocator.NeedsCmdShell(_executable))
         {
             var comspec = Environment.GetEnvironmentVariable("ComSpec") ?? @"C:\Windows\System32\cmd.exe";

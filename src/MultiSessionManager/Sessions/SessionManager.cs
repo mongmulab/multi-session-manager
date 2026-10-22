@@ -86,6 +86,9 @@ public sealed class SessionManager : IDisposable
             Window = Window,
         });
 
+    /// <summary>지금 이 목록이 띄운 프로세스 수(자손 포함). 시험과 진단에 쓴다.</summary>
+    public int ActiveProcesses => _job.ActiveProcesses;
+
     public IReadOnlyList<string> SessionOrder => Sessions.Select(s => s.Id).ToList();
 
     private string DefaultTitle(string workingDirectory)
