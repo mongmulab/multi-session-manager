@@ -197,6 +197,8 @@
             </Setter.Value>
         </Setter>
     </Style>
+    <!-- 메뉴 안의 구분선은 TargetType 스타일이 아니라 이 키로 찾는다. 없으면 시스템 기본(밝은 두 줄)이 나온다. -->
+    <Style x:Key="{x:Static MenuItem.SeparatorStyleKey}" TargetType="Separator" BasedOn="{StaticResource {x:Type Separator}}" />
 
     <!-- 얇은 스크롤바(마우스를 올리면 조금 진해진다) -->
     <Style x:Key="ThumbStyle" TargetType="Thumb">
