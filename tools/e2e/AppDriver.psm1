@@ -12,6 +12,8 @@ public static class MsmWin {
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
   [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr h);
   [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
   public struct RECT { public int Left, Top, Right, Bottom; }
 }
 "@
@@ -81,6 +83,21 @@ function Invoke-MsmButton([System.Diagnostics.Process]$App, [string]$Name) {
     $btn = (Get-MsmRoot $App).FindFirst([System.Windows.Automation.TreeScope]::Descendants, $cond)
     if (-not $btn) { throw "버튼 '$Name' 을 찾지 못했습니다" }
     $btn.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+}
+
+# 앱 창을 활성 창으로 만든다. 사람이 원격 데스크톱 등으로 다른 창을 쓰는 중이면 Windows 가 포커스 가로채기를 막아
+# SetForegroundWindow 만으로는 안 된다(앱은 "안 보는 중" 으로 판단해 새 결과를 붙인다). Alt 를 한 번 눌렀다 떼면 풀린다.
+# 활성이 됐는지 돌려준다.
+function Set-MsmActive([System.Diagnostics.Process]$App) {
+    $h = $App.MainWindowHandle
+    for ($i = 0; $i -lt 3; $i++) {
+        [MsmWin]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
+        [MsmWin]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+        [MsmWin]::SetForegroundWindow($h) | Out-Null
+        Start-Sleep -Milliseconds 300
+        if ([MsmWin]::GetForegroundWindow() -eq $h) { return $true }
+    }
+    $false
 }
 
 function Save-MsmShot([System.Diagnostics.Process]$App, [string]$Path) {

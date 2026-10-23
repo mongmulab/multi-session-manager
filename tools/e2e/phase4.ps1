@@ -76,11 +76,13 @@ $texts = @(Get-MsmListText $app)
 Check "처음: 네 세션 모두 실행 중" (@($texts | Where-Object { $_ -match '실행 중' }).Count -eq 4) ($texts -join " // ")
 
 # 1) 한 턴: 작업 중 → 입력 대기. 사용자 설정의 Hook 도 그대로 돈다(우리 Hook 은 더해질 뿐).
+# "보고 있던 세션" 판정은 앱 창이 활성이어야 성립한다. 시험 중에 다른 창을 누르면 이 판정은 실패한다.
+$active = Set-MsmActive $app
 node $cdp $Port $OutDir "ime:한 단어로만 답해 안녕" "key:Enter" | Out-Null
 $w = Watch 0 { param($t) $t -match '입력 대기' }
 Check "한 턴: 작업 중을 거쳐 입력 대기" ($w.Ok -and $w.Seen -match '작업 중') "목록 상태 변화: $($w.Seen)"
 Check "한 턴: 칸 머리에도 같은 상태" ((PaneStatus 0) -eq "입력 대기") "칸 머리 '$(PaneStatus 0)'"
-Check "한 턴: 보고 있던 세션이라 새 결과 표시 없음" ($w.Last -notmatch '새 결과') $w.Last
+Check "한 턴: 보고 있던 세션이라 새 결과 표시 없음" ($w.Last -notmatch '새 결과') "$($w.Last) · 창 활성 $active"
 $sid0 = $sessions[0].AgentSessionId
 Check "사용자 Hook 도 함께 돎" ((UserHooks "UserPromptSubmit" $sid0) -ge 1 -and (UserHooks "Stop" $sid0) -ge 1) "기록기 UserPromptSubmit $(UserHooks 'UserPromptSubmit' $sid0) · Stop $(UserHooks 'Stop' $sid0)"
 Save-MsmShot $app (Join-Path $OutDir "p4_01_waiting.png")

@@ -8,7 +8,7 @@ Claude Code 를 여러 개 띄우면 PowerShell 창이 금방 대여섯 개가 �
 
 ![세션 3개를 띄운 화면](docs/images/phase1_resumed.png)
 
-> 지금은 0.4.0, 4단계(상태 표시·안정화)까지 만든 상태입니다. Windows 10 1809 이상, Windows 전용입니다.
+> 지금은 0.4.1, 4단계(상태 표시·안정화)와 화면 정리까지 만든 상태입니다. Windows 10 1809 이상, Windows 전용입니다.
 
 ## 할 수 있는 것
 
