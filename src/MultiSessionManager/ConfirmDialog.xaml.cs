@@ -15,8 +15,26 @@ public partial class ConfirmDialog : Window
         OkButton.Content = ok;
     }
 
+    private bool _alt;
+
     public static bool Ask(Window owner, string title, string heading, string body, string ok) =>
         new ConfirmDialog(title, heading, body, ok) { Owner = owner }.ShowDialog() == true;
 
+    /// <summary>두 갈래 중 하나를 고르게 한다. 취소하면 null, 주 단추면 true, 둘째 단추면 false.</summary>
+    public static bool? Choose(Window owner, string title, string heading, string body, string ok, string alt)
+    {
+        var dialog = new ConfirmDialog(title, heading, body, ok) { Owner = owner };
+        dialog.AltButton.Content = alt;
+        dialog.AltButton.Visibility = Visibility.Visible;
+        if (dialog.ShowDialog() != true) return null;
+        return !dialog._alt;
+    }
+
     private void OnOk(object sender, RoutedEventArgs e) => DialogResult = true;
+
+    private void OnAlt(object sender, RoutedEventArgs e)
+    {
+        _alt = true;
+        DialogResult = true;
+    }
 }

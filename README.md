@@ -66,9 +66,25 @@ dotnet publish src/MultiSessionManager -p:PublishProfile=win-x64   # → publish
 2칸·4칸으로 늘리면 아직 안 보이던 세션이 목록 순서대로 채워지고, 칸에 보이는 세션은 그때 자동으로 뜹니다.
 줄일 때는 지금 보고 있는(파란 테두리) 세션이 남습니다.
 
-세션 목록·칸 배치·창 위치는 `%APPDATA%\MultiSessionManager\sessions.json` 에 저장됩니다.
-실행 기록은 `%LOCALAPPDATA%\MultiSessionManager\logs\` 에 하루 한 파일로 남습니다. 기동 단계별 시간과 오류만 적고, 대화 내용은 적지 않습니다.
-녹화나 시연처럼 평소 목록과 떼어 두고 싶을 때는 환경변수 `MSM_STATE_FILE` 로 다른 파일을 지정하면 됩니다.
+### 무엇이 어디에 저장되나
+
+| 내용 | 위치 |
+|---|---|
+| 세션 목록(이름 · 폴더 · Claude 대화 ID) · 칸 배치 · 창 위치 | `%APPDATA%\MultiSessionManager\sessions.json` (바꿀 수 있음) |
+| 대화 본문 | Claude Code 가 `~/.claude/projects/` 에 직접 저장합니다. 이 앱은 대화 ID 만 기억합니다 |
+| 실행 기록 | `%LOCALAPPDATA%\MultiSessionManager\logs\` 하루 한 파일. 기동 단계별 시간과 오류만 적고, 대화 내용은 적지 않습니다 |
+| 세션별 상태 훅 설정 · 터미널 화면 캐시 | `%LOCALAPPDATA%\MultiSessionManager\hooks\` · `WebView2\`. 지워도 다시 만들어집니다 |
+
+목록 저장 위치는 상태줄 오른쪽의 폴더 단추에서 바꿉니다.
+
+- **저장 위치 바꾸기…** — 폴더를 고르면 지금 목록을 그리로 옮깁니다. 새 자리에 다 쓴 뒤에야 옛 파일을 지웁니다.
+  그 폴더에 이미 목록이 있으면 **그 목록 열기**(앱을 다시 시작합니다)와 **지금 목록으로 덮기**(그 자리의 것은 `.bak` 으로 남깁니다) 중에 고릅니다.
+- **기본 위치로 되돌리기** — 목록을 `%APPDATA%` 로 다시 옮깁니다.
+- 고른 위치는 `%APPDATA%\MultiSessionManager\location.json` 에 적어 둡니다. 그 폴더가 없으면(빠진 USB 등) 기본 위치로 열고 상태줄에 알립니다.
+- OneDrive 같은 동기화 폴더에 두면 다른 PC 에서도 같은 목록이 보입니다. 다만 대화 본문은 PC 마다 따로라, 다른 PC 에서는 새 대화로 시작합니다.
+  두 PC 에서 동시에 열어 두면 나중에 저장한 쪽이 이깁니다.
+
+녹화나 시연처럼 평소 목록과 떼어 두고 싶을 때는 환경변수 `MSM_STATE_FILE` 로 다른 파일을 지정합니다. 이 값이 있으면 화면에서는 위치를 바꾸지 않습니다.
 
 ## 이렇게 동작합니다
 

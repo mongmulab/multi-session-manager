@@ -153,7 +153,9 @@
         <!-- 상태줄: 왼쪽은 보고 있는 세션, 오른쪽은 상태별 세션 수 -->
         <Border Grid.Row="1" Grid.ColumnSpan="3" Background="{StaticResource WindowBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="12,4">
             <DockPanel>
-                <TextBlock x:Name="VersionText" DockPanel.Dock="Right" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="14,0,0,0" VerticalAlignment="Center" />
+                <TextBlock x:Name="VersionText" DockPanel.Dock="Right" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="10,0,0,0" VerticalAlignment="Center" />
+                <Button x:Name="StoreButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}" Width="24" Height="20" FontSize="12" Margin="10,0,0,0"
+                        Content="&#xE8B7;" Click="OnStoreButton" AutomationProperties.Name="목록 저장 위치" />
                 <StackPanel x:Name="SummaryPanel" DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" />
                 <TextBlock x:Name="StatusBar" Foreground="{StaticResource SubtleTextBrush}" FontSize="12" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
             </DockPanel>

@@ -10,6 +10,7 @@
         <TextBlock x:Name="Body" Foreground="{StaticResource SubtleTextBrush}" TextWrapping="Wrap" Margin="0,8,0,0" LineHeight="19" />
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
             <Button Content="취소" IsCancel="True" IsDefault="True" MinWidth="80" Margin="0,0,8,0" />
+            <Button x:Name="AltButton" MinWidth="80" Margin="0,0,8,0" Visibility="Collapsed" Click="OnAlt" />
             <Button x:Name="OkButton" MinWidth="80" Style="{StaticResource PrimaryButton}" Click="OnOk" />
         </StackPanel>
     </StackPanel>

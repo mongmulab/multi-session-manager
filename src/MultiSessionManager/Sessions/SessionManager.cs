@@ -7,7 +7,7 @@ namespace MultiSessionManager.Sessions;
 /// <summary>세션 목록의 생성·이름 변경·삭제·저장을 맡는다. UI 스레드에서만 부른다.</summary>
 public sealed class SessionManager : IDisposable
 {
-    private readonly SessionStore _store;
+    private SessionStore _store;
     private readonly IAgentAdapter _adapter;
     private readonly ProcessJob _job = new();
 
@@ -73,6 +73,34 @@ public sealed class SessionManager : IDisposable
         if (resumed is not null && Sessions.Contains(session))
             Save();
         return resumed;
+    }
+
+    public string StoreFile => _store.FilePath;
+
+    /// <summary>
+    /// 목록을 다른 파일로 옮긴다. 그 자리에 이미 파일이 있으면 옆에 .bak 으로 남긴 뒤 덮는다.
+    /// 새 위치에 다 쓰고 <paramref name="commit"/>(저장 위치 기록)까지 끝난 뒤에야 옛 파일을 지운다.
+    /// 중간에 실패하면 옛 위치를 그대로 쓴다 — 어느 순간에 멈춰도 목록이 한 곳에는 남는다.
+    /// </summary>
+    public void MoveTo(string file, Action? commit = null)
+    {
+        var old = _store;
+        if (SessionStore.SamePath(old.FilePath, file)) return;
+        if (File.Exists(file))
+            File.Copy(file, file + ".bak-" + DateTime.Now.ToString("yyyyMMddHHmmss"), overwrite: true);
+        _store = new SessionStore(Path.GetFullPath(file));
+        try
+        {
+            Save();
+            commit?.Invoke();
+        }
+        catch
+        {
+            _store = old;
+            throw;
+        }
+        if (File.Exists(old.FilePath))
+            File.Delete(old.FilePath);
     }
 
     public bool HasConversation(Session session) => _adapter.HasConversation(session.Record);

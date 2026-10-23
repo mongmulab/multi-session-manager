@@ -20,13 +20,75 @@ public sealed class SessionStore
 
     public SessionStore(string filePath) => FilePath = filePath;
 
-    /// <summary>MSM_STATE_FILE 로 바꿀 수 있다. 시연·녹화용 목록을 평소 목록과 떼어 둘 때 쓴다.</summary>
-    public static string DefaultPath()
+    private static readonly string AppFolder =
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MultiSessionManager");
+
+    /// <summary>처음 깔았을 때의 목록 파일.</summary>
+    public static string DefaultFile { get; } = Path.Combine(AppFolder, "sessions.json");
+
+    /// <summary>
+    /// 사용자가 고른 저장 위치를 적어 두는 파일. 목록이 어디로 가든 이 파일은 늘 기본 폴더에 둔다.
+    /// 앱이 시작할 때 목록을 찾으려면 이것 하나는 정해진 자리에 있어야 한다.
+    /// </summary>
+    public static string PointerFile { get; } = Path.Combine(AppFolder, "location.json");
+
+    /// <summary>
+    /// 목록 파일을 찾는다. MSM_STATE_FILE(시연·녹화·시험용) → 사용자가 고른 위치 → 기본 위치 순이다.
+    /// 고른 폴더가 지금 없으면(빠진 USB, 아직 안 붙은 네트워크 드라이브) 기본 위치로 열되 고른 기록은 지우지 않는다.
+    /// </summary>
+    public static (string Path, StoreSource Source) Locate(string? environmentValue, string pointerFile, string defaultFile)
     {
-        var overridePath = Environment.GetEnvironmentVariable("MSM_STATE_FILE");
-        if (!string.IsNullOrWhiteSpace(overridePath))
-            return Path.GetFullPath(overridePath);
-        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MultiSessionManager", "sessions.json");
+        if (!string.IsNullOrWhiteSpace(environmentValue))
+            return (Path.GetFullPath(environmentValue), StoreSource.Environment);
+        var chosen = ReadPointer(pointerFile);
+        if (chosen is null)
+            return (defaultFile, StoreSource.Default);
+        return Directory.Exists(Path.GetDirectoryName(chosen))
+            ? (chosen, StoreSource.Chosen)
+            : (defaultFile, StoreSource.ChosenMissing);
+    }
+
+    public static (string Path, StoreSource Source) Locate() =>
+        Locate(Environment.GetEnvironmentVariable("MSM_STATE_FILE"), PointerFile, DefaultFile);
+
+    public static string DefaultPath() => Locate().Path;
+
+    /// <summary>고른 위치를 적는다. 기본 위치(또는 null)면 기록을 지운다.</summary>
+    public static void Remember(string pointerFile, string defaultFile, string? file)
+    {
+        if (file is null || SamePath(file, defaultFile))
+        {
+            File.Delete(pointerFile);
+            return;
+        }
+        Directory.CreateDirectory(Path.GetDirectoryName(pointerFile)!);
+        var temp = pointerFile + ".tmp";
+        File.WriteAllText(temp, JsonSerializer.Serialize(new Pointer { StateFile = Path.GetFullPath(file) }, Options));
+        File.Move(temp, pointerFile, overwrite: true);
+    }
+
+    public static bool SamePath(string a, string b) =>
+        string.Equals(Path.GetFullPath(a), Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>고른 위치(기록이 없거나 깨졌으면 null). 그 폴더가 지금 있는지는 보지 않는다.</summary>
+    public static string? ReadPointer(string pointerFile)
+    {
+        try
+        {
+            if (!File.Exists(pointerFile)) return null;
+            var file = JsonSerializer.Deserialize<Pointer>(File.ReadAllText(pointerFile), Options)?.StateFile;
+            return string.IsNullOrWhiteSpace(file) ? null : Path.GetFullPath(file);
+        }
+        catch (Exception ex) when (ex is JsonException or IOException or ArgumentException or NotSupportedException)
+        {
+            // 기록이 깨졌으면 기본 위치로 연다. 목록 자체를 잃는 것보다 낫다.
+            return null;
+        }
+    }
+
+    private sealed class Pointer
+    {
+        public string? StateFile { get; set; }
     }
 
     public AppState Load()
@@ -58,4 +120,16 @@ public sealed class SessionStore
         else
             File.Move(temp, FilePath);
     }
+}
+
+public enum StoreSource
+{
+    /// <summary>기본 위치(%APPDATA%).</summary>
+    Default,
+    /// <summary>사용자가 고른 위치.</summary>
+    Chosen,
+    /// <summary>MSM_STATE_FILE 로 정해짐. 화면에서 바꾸지 않는다.</summary>
+    Environment,
+    /// <summary>고른 위치가 지금 없어 기본 위치로 열었다.</summary>
+    ChosenMissing,
 }

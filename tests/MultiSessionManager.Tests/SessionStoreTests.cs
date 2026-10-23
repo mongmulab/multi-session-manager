@@ -65,6 +65,81 @@ public sealed class SessionStoreTests : IDisposable
         Assert.Equal(2, new SessionStore(FilePath).Load().Sessions.Count);
     }
 
+    [Fact]
+    public void Locate_prefers_environment_then_chosen_then_default()
+    {
+        var pointer = Path.Combine(_dir, "location.json");
+        var fallback = Path.Combine(_dir, "default", "sessions.json");
+        var chosen = Path.Combine(_dir, "chosen", "sessions.json");
+
+        Assert.Equal((fallback, StoreSource.Default), SessionStore.Locate(null, pointer, fallback));
+
+        Directory.CreateDirectory(Path.GetDirectoryName(chosen)!);
+        SessionStore.Remember(pointer, fallback, chosen);
+        Assert.Equal((chosen, StoreSource.Chosen), SessionStore.Locate(null, pointer, fallback));
+        Assert.Equal((FilePath, StoreSource.Environment), SessionStore.Locate(FilePath, pointer, fallback));
+
+        // 기본 위치를 고르면 기록을 지운다
+        SessionStore.Remember(pointer, fallback, fallback);
+        Assert.False(File.Exists(pointer));
+    }
+
+    [Fact]
+    public void Chosen_folder_that_is_gone_opens_default_but_keeps_the_choice()
+    {
+        var pointer = Path.Combine(_dir, "location.json");
+        var fallback = Path.Combine(_dir, "sessions.json");
+        var gone = Path.Combine(_dir, "unplugged", "sessions.json");
+        SessionStore.Remember(pointer, fallback, gone);
+
+        Assert.Equal((fallback, StoreSource.ChosenMissing), SessionStore.Locate(null, pointer, fallback));
+        Assert.Equal(gone, SessionStore.ReadPointer(pointer));
+    }
+
+    [Fact]
+    public void Broken_pointer_opens_default()
+    {
+        Directory.CreateDirectory(_dir);
+        var pointer = Path.Combine(_dir, "location.json");
+        File.WriteAllText(pointer, "{ nope");
+        Assert.Equal((FilePath, StoreSource.Default), SessionStore.Locate(null, pointer, FilePath));
+    }
+
+    [Fact]
+    public void MoveTo_writes_the_new_file_backs_up_what_was_there_and_removes_the_old()
+    {
+        var target = Path.Combine(_dir, "moved", "sessions.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+        File.WriteAllText(target, "{}");
+        using var manager = new SessionManager(new SessionStore(FilePath), new NullAdapter());
+        manager.Create(@"D:\work\api");
+
+        var committed = false;
+        manager.MoveTo(target, () => committed = true);
+
+        Assert.True(committed);
+        Assert.False(File.Exists(FilePath));
+        Assert.Single(new SessionStore(target).Load().Sessions);
+        Assert.Single(Directory.GetFiles(Path.GetDirectoryName(target)!, "sessions.json.bak-*"));
+
+        // 옮긴 뒤의 저장은 새 위치로 간다
+        manager.Create(@"D:\work\web");
+        Assert.Equal(2, new SessionStore(target).Load().Sessions.Count);
+    }
+
+    [Fact]
+    public void MoveTo_keeps_the_old_place_when_the_commit_fails()
+    {
+        var target = Path.Combine(_dir, "moved", "sessions.json");
+        using var manager = new SessionManager(new SessionStore(FilePath), new NullAdapter());
+        manager.Create(@"D:\work\api");
+
+        Assert.Throws<IOException>(() => manager.MoveTo(target, () => throw new IOException("기록 실패")));
+
+        Assert.Equal(FilePath, manager.StoreFile);
+        Assert.Single(new SessionStore(FilePath).Load().Sessions);
+    }
+
     private sealed class NullAdapter : IAgentAdapter
     {
         public string Kind => "null";

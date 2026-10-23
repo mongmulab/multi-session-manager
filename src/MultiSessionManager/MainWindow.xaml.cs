@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -19,6 +20,9 @@ public partial class MainWindow : Window
 {
     private readonly SessionManager? _manager;
     private readonly string? _startupError;
+
+    // 목록 파일을 어디서 찾았는지. 상태줄 단추의 안내와 "바꾸기" 가능 여부를 정한다.
+    private StoreSource _storeSource;
     private readonly TerminalBridge _bridge = new();
     private readonly Task<CoreWebView2Environment>? _webEnvironment;
     private readonly HookServer? _hooks;
@@ -61,7 +65,9 @@ public partial class MainWindow : Window
                 AppLog.Error("Hook 수신기를 열지 못했습니다. 상태 표시 없이 진행합니다", ex);
             }
 
-            _manager = new SessionManager(new SessionStore(SessionStore.DefaultPath()), adapter);
+            var (storeFile, storeSource) = SessionStore.Locate();
+            _storeSource = storeSource;
+            _manager = new SessionManager(new SessionStore(storeFile), adapter);
             _manager.Load();
             WireBridge();
             foreach (var session in _manager.Sessions)
@@ -82,6 +88,7 @@ public partial class MainWindow : Window
         VersionText.Text = "v" + (Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "");
         UpdateButtons();
         UpdateSummary();
+        UpdateStoreInfo();
     }
 
     private static Task<CoreWebView2Environment> CreateWebEnvironmentAsync()
@@ -147,7 +154,9 @@ public partial class MainWindow : Window
     private void OnBridgeReady()
     {
         AppLog.Info("터미널 페이지 준비");
-        SetStatus($"세션 {_manager!.Sessions.Count}개 · 저장 위치 {SessionStore.DefaultPath()}");
+        SetStatus(_storeSource == StoreSource.ChosenMissing
+            ? $"고른 저장 위치가 지금 없어 기본 위치로 열었습니다 · {SessionStore.ReadPointer(SessionStore.PointerFile)}"
+            : $"세션 {_manager!.Sessions.Count}개 · 저장 위치 {_manager.StoreFile}");
     }
 
     private void Attach(Session session)
@@ -401,13 +410,18 @@ public partial class MainWindow : Window
 
     private void OnOpenFolder(object sender, RoutedEventArgs e)
     {
-        if (Selected is not { } session) return;
-        if (!Directory.Exists(session.WorkingDirectory))
+        if (Selected is { } session)
+            OpenInExplorer(session.WorkingDirectory);
+    }
+
+    private void OpenInExplorer(string folder)
+    {
+        if (!Directory.Exists(folder))
         {
-            SetStatus($"폴더가 없습니다: {session.WorkingDirectory}");
+            SetStatus($"폴더가 없습니다: {folder}");
             return;
         }
-        Process.Start(new ProcessStartInfo("explorer.exe", $"\"{session.WorkingDirectory}\"") { UseShellExecute = true });
+        Process.Start(new ProcessStartInfo("explorer.exe", $"\"{folder}\"") { UseShellExecute = true });
     }
 
     private void OnWindowKeyDown(object sender, KeyEventArgs e)
@@ -464,6 +478,108 @@ public partial class MainWindow : Window
     }
 
     private void SetStatus(string text) => StatusBar.Text = text;
+
+    private void UpdateStoreInfo()
+    {
+        if (_manager is null)
+        {
+            StoreButton.Visibility = Visibility.Collapsed;
+            return;
+        }
+        var note = _storeSource switch
+        {
+            StoreSource.Environment => "\nMSM_STATE_FILE 로 정해져 있습니다",
+            StoreSource.ChosenMissing => "\n고른 위치가 지금 없어 기본 위치를 쓰는 중입니다",
+            _ => "",
+        };
+        StoreButton.ToolTip = $"세션 목록 저장 위치\n{_manager.StoreFile}{note}";
+    }
+
+    // 상태줄 폴더 단추: 저장 위치 보기·바꾸기·되돌리기
+    private void OnStoreButton(object sender, RoutedEventArgs e)
+    {
+        if (_manager is null) return;
+        var canChange = _storeSource != StoreSource.Environment;
+        var menu = new ContextMenu { PlacementTarget = StoreButton, Placement = PlacementMode.Top };
+        menu.Items.Add(InfoEntry(_manager.StoreFile));
+        menu.Items.Add(new Separator());
+        menu.Items.Add(MenuEntry("저장 위치 바꾸기…", "\uE8DE", canChange, OnChangeStore));
+        menu.Items.Add(MenuEntry("저장 폴더 열기", "\uE838", true, (_, _) => OpenInExplorer(Path.GetDirectoryName(_manager.StoreFile)!)));
+        menu.Items.Add(MenuEntry("기본 위치로 되돌리기", "\uE777", canChange && _storeSource != StoreSource.Default,
+            (_, _) => ChangeStore(SessionStore.DefaultFile)));
+        if (!canChange)
+            menu.Items.Add(InfoEntry("MSM_STATE_FILE 로 정해져 있어 바꿀 수 없습니다"));
+        menu.IsOpen = true;
+    }
+
+    // 머리글의 '_' 는 단축키 표시로 먹힌다(경로·변수 이름이 깨진다). 글자 그대로 보이게 TextBlock 으로 넣는다.
+    private static MenuItem InfoEntry(string text) => new() { Header = new TextBlock { Text = text }, IsEnabled = false };
+
+    private static MenuItem MenuEntry(string header, string icon, bool enabled, RoutedEventHandler click)
+    {
+        var item = new MenuItem { Header = header, Icon = icon, IsEnabled = enabled };
+        item.Click += click;
+        return item;
+    }
+
+    private void OnChangeStore(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFolderDialog { Title = "세션 목록을 둘 폴더" };
+        var current = Path.GetDirectoryName(_manager!.StoreFile);
+        if (Directory.Exists(current)) dialog.InitialDirectory = current;
+        if (dialog.ShowDialog(this) != true) return;
+        ChangeStore(Path.Combine(dialog.FolderName, "sessions.json"));
+    }
+
+    private void ChangeStore(string file)
+    {
+        var manager = _manager!;
+        void Remember() => SessionStore.Remember(SessionStore.PointerFile, SessionStore.DefaultFile, file);
+        try
+        {
+            if (SessionStore.SamePath(file, manager.StoreFile))
+            {
+                Remember(); // 고른 위치가 없어 기본 위치로 열었던 경우: 기록만 정리한다
+            }
+            else
+            {
+                var existing = File.Exists(file) ? new SessionStore(file).Load().Sessions.Count : 0;
+                if (existing > 0)
+                {
+                    var open = ConfirmDialog.Choose(this, "저장 위치 바꾸기", $"그 폴더에 이미 세션 {existing}개짜리 목록이 있습니다.",
+                        "그 목록을 열면 앱을 다시 시작합니다. 지금 실행 중인 세션은 끝나고, 지금 목록은 지금 자리에 그대로 남습니다.\n" +
+                        "지금 목록으로 덮으면 그 자리의 목록은 옆에 .bak 파일로 남깁니다.",
+                        "그 목록 열기", "지금 목록으로 덮기");
+                    if (open is null) return;
+                    if (open == true)
+                    {
+                        Remember();
+                        RestartApp();
+                        return;
+                    }
+                }
+                manager.MoveTo(file, Remember);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            AppLog.Error("저장 위치를 바꾸지 못했습니다", ex);
+            SetStatus($"저장 위치를 바꾸지 못했습니다: {ex.Message}");
+            return;
+        }
+        _storeSource = SessionStore.SamePath(file, SessionStore.DefaultFile) ? StoreSource.Default : StoreSource.Chosen;
+        AppLog.Info($"저장 위치 → {manager.StoreFile}");
+        UpdateStoreInfo();
+        SetStatus($"세션 목록을 옮겼습니다 · {manager.StoreFile}");
+    }
+
+    // 새 앱을 띄우고 이 창을 닫는다. 새 앱은 이 프로세스가 세션을 다 정리하고 끝날 때까지 기다렸다 뜬다.
+    private void RestartApp()
+    {
+        if (Environment.ProcessPath is not { } exe) return;
+        Process.Start(new ProcessStartInfo(exe, $"--after {Environment.ProcessId}") { UseShellExecute = false });
+        Close();
+    }
 
     // 상태줄 오른쪽: 상태별 세션 수(있는 것만). 목록을 다 훑지 않아도 몇 개가 나를 기다리는지 보인다.
     private void UpdateSummary()
