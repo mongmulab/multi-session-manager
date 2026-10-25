@@ -103,7 +103,8 @@ function Set-MsmActive([System.Diagnostics.Process]$App) {
 function Save-MsmShot([System.Diagnostics.Process]$App, [string]$Path) {
     $h = $App.MainWindowHandle
     # WPF 는 활성 창이 아니면 PrintWindow 에 검은 면으로 찍힐 때가 있다. 앞으로 가져온 뒤 한 번 그리게 기다린다.
-    [MsmWin]::SetForegroundWindow($h) | Out-Null
+    # SetForegroundWindow 만으로는 다시 띄운 창이 앞으로 오지 않았다(원격 연결 중 재기동 뒤 캡처가 전부 검음).
+    Set-MsmActive $App | Out-Null
     Start-Sleep -Milliseconds 500
     $r = New-Object MsmWin+RECT
     [MsmWin]::GetWindowRect($h, [ref]$r) | Out-Null

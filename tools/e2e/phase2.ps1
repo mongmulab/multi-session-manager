@@ -138,6 +138,7 @@ Start-Sleep -Seconds $Settle
 $l = Layout
 Check "재기동: 4칸 배치와 칸막이 비율 복원" (($l.mode -eq 4) -and (($l.slots -join ',') -eq ($saved.slots -join ',')) -and ([math]::Abs($l.col - $saved.col) -lt 0.001) -and ([math]::Abs($l.row - $saved.row) -lt 0.001) -and ([math]::Abs($l.col - 0.5) -gt 0.1)) "mode=$($l.mode) slots=$($l.slots -join ',') col=$("{0:N3}" -f $l.col) row=$("{0:N3}" -f $l.row)"
 Check "재기동: 보이는 네 칸 모두 실행" ((ClaudeCount $app) -eq 4) "claude $(ClaudeCount $app)개"
+Drawn 4 | Out-Null   # 캡처에 Claude 화면이 나오게 그릴 때까지 기다린다
 Save-MsmShot $app (Join-Path $OutDir "p2_06_restored.png")
 $stop = Stop-MsmApp $app
 Check "재기동 후 종료: 자식 프로세스가 남지 않음" ($stop.Left -eq 0) "자식 $($stop.Children)개 중 남은 것 $($stop.Left)개"
