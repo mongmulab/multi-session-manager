@@ -9,7 +9,7 @@
     [int]$Timeout = 90
 )
 # 사용자 설정을 복제한 시험용 설정으로 앱을 띄워, 칸마다 Claude 의 플러그인·훅·상태줄이 도는지 본다.
-# 훅과 상태줄은 기록기로 바꿔 두었으므로(clone_config.py) 실제 Hub·Orca 로는 아무것도 가지 않는다.
+# 훅과 상태줄은 기록기로 바꿔 두었으므로(clone_config.py) 사용자의 실제 훅이 보내는 곳으로는 아무것도 가지 않는다.
 $ErrorActionPreference = "Stop"
 Import-Module (Join-Path $PSScriptRoot "AppDriver.psm1") -Force
 New-Item -ItemType Directory -Force $OutDir | Out-Null

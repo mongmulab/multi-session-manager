@@ -1,0 +1,18 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 9.0.x
+      - run: dotnet build -c Release
+      # 실제 ConPTY 를 띄우는 시험이 들어 있어 Windows 러너에서만 돕니다. Claude Code 는 설치하지 않습니다.
+      - run: dotnet test -c Release --no-build --logger "console;verbosity=normal"

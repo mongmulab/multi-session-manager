@@ -6,7 +6,7 @@ Claude Code 를 여러 개 띄우면 PowerShell 창이 금방 대여섯 개가 �
 이 프로그램은 그 창들을 한 화면의 세션 목록으로 모읍니다.
 세션마다 이름과 폴더가 붙고, 앱을 껐다 켜도 세션마다 **같은 대화로** 이어집니다.
 
-![세션 3개를 띄운 화면](docs/images/phase1_resumed.png)
+![세션 넷을 4칸으로 띄우고, 권한을 묻는 세션이 목록에 확인 필요로 뜬 화면](docs/images/main_status.png)
 
 > 지금은 0.4.1, 4단계(상태 표시·안정화)와 화면 정리까지 만든 상태입니다. Windows 10 1809 이상, Windows 전용입니다.
 
@@ -36,8 +36,8 @@ Codex·Gemini CLI 는 아직 없습니다. 아래 [단계](#단계)에 순서를
 | WebView2 런타임 (Windows 11 은 기본 설치) | 없으면 첫 실행 때 상태줄에 안내가 뜹니다 |
 
 ```powershell
-git clone <이 저장소>
-cd 01_multsessionmanager
+git clone https://github.com/mongmulab/multi-session-manager.git
+cd multi-session-manager
 dotnet run --project src/MultiSessionManager
 ```
 
@@ -116,7 +116,7 @@ WPF 창 (세션 목록 · 버튼)
 ## 시험
 
 ```powershell
-dotnet test                                                    # 84건. 실제 ConPTY 를 띄우는 시험, 100회 열고 닫기 포함
+dotnet test                                                    # 92건(화면 그리기 3건은 MSM_UI_PREVIEW=1 일 때만). 실제 ConPTY 를 띄우는 시험, 100회 열고 닫기 포함
 powershell -ExecutionPolicy Bypass -File tools/e2e/phase2.ps1   # 칸 분할 19가지
 powershell -ExecutionPolicy Bypass -File tools/e2e/phase3.ps1   # 창 복원·기동 시간 16가지
 powershell -ExecutionPolicy Bypass -File tools/e2e/plugins.ps1  # Claude 플러그인·훅·상태줄 8가지
@@ -151,7 +151,7 @@ E2E 는 칸을 바꿀 때마다 Claude 가 그린 가로줄 길이를 터미널 
 | 2 레이아웃 | 1 · 2 · 4칸, 칸막이, 크기 변경, 배치 저장 | 완료 |
 | 3 복원 보강 | 창 위치 · 크기 저장, 기동 시간 줄이기, 종료 정리 | 완료 |
 | 4 안정화 | 입력 대기 · 완료 표시(Hook), 오류 기록, 반복 생성 · 삭제 시험 | 완료 |
-| 4.5 화면 정리 | 상용 도구 수준으로 UI 다듬기 | 다음 |
+| 4.5 화면 정리 | 어두운 테마 · 세션 카드 · 상태 색 · 확인 창 | 1차 완료 |
 | 5 확장 | Codex · Gemini CLI, Git Worktree, diff 보기 | |
 
 ## 알려진 점
